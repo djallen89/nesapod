@@ -4,12 +4,12 @@ use conrod::backend::glium::glium::{self, Surface};
 use conrod::theme::Theme;
 use conrod::color::{BLACK, WHITE, TRANSPARENT};
 use core;
-    
-pub fn main(log: Option<String>) {
+
+pub fn main(logname: Option<String>) {
     const WIDTH: u32 = 800;
     const HEIGHT: u32 = 600;
 
-    let mut debugger = core::Debug::new(20, None);
+    let mut debugger = core::Debug::new(20, logname);
 
     let mut events_loop = glium::glutin::EventsLoop::new();
     let window = glium::glutin::WindowBuilder::new()
