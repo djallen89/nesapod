@@ -1,0 +1,15 @@
+[package]
+name = "nesapod"
+version = "0.1.0"
+authors = ["Dominick Allen <dominick.allen1989@gmail.com>"]
+
+[dependencies]
+conrod = { version = "0.56.0", features = ["winit", "glium"]}
+
+[features]
+winit = []
+glium = []
+
+[[bin]]
+name = "nesapod"
+required-features = ["winit", "glium"]
