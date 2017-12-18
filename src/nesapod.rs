@@ -5,7 +5,7 @@ use conrod::theme::Theme;
 use conrod::color::{BLACK, WHITE, TRANSPARENT};
 use core;
     
-pub fn main() {
+pub fn main(log: Option<String>) {
     const WIDTH: u32 = 800;
     const HEIGHT: u32 = 600;
 
