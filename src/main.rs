@@ -7,8 +7,9 @@ extern crate bitflags;
 use getopts::Options;
 use std::env;
 
-mod nesapod;
 mod core;
+mod nesapod;
+mod tests;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -20,6 +21,7 @@ fn main() {
         Ok(m) => m,
         Err(f) => panic!(f.to_string())
     };
+    
     if matches.opt_present("h") {
         print!("{}", opts.usage(&format!("Usage: {} [options]", program)));
         return;
@@ -30,6 +32,8 @@ fn main() {
     } else {
         None
     };
+
+    tests::test_parser();
     
     nesapod::main(log);
 }
