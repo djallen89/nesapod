@@ -1,6 +1,8 @@
 #[macro_use]
 extern crate conrod;
 extern crate getopts;
+#[macro_use]
+extern crate bitflags;
 
 use getopts::Options;
 use std::env;
