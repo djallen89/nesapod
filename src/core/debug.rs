@@ -31,16 +31,15 @@ impl Debug {
         out
     }
 
-    pub fn input(&mut self, msg: &str) -> Result<(), ()> {
+    pub fn input(&mut self, msg: &str) {
         while self.messages.len() >= self.length as usize {
             let back = self.messages.pop_back().unwrap();
             match self.write(&back) {
                 Ok(_) => {},
-                Err(_) => {}
+                Err(f) => panic!(f)
             };
         }
         self.messages.push_front(msg.to_string());
-        Ok(())
     }
 
     pub fn write(&mut self, msg: &str) -> Result<(), IOError> {

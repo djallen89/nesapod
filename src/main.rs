@@ -9,7 +9,7 @@ use std::env;
 
 mod core;
 mod nesapod;
-mod tests;
+pub mod tests;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -33,8 +33,6 @@ fn main() {
         None
     };
 
-    tests::test_parser();
-    
     nesapod::main(log);
 }
 

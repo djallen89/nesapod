@@ -4,12 +4,23 @@ use conrod::backend::glium::glium::{self, Surface};
 use conrod::theme::Theme;
 use conrod::color::{BLACK, WHITE, TRANSPARENT};
 use core;
+use core::ines::INES;
 
 pub fn main(logname: Option<String>) {
     const WIDTH: u32 = 800;
     const HEIGHT: u32 = 600;
 
     let mut debugger = core::Debug::new(20, logname);
+    let ines = match INES::new("assets/instr_test-v5/rom_singles/01-basics.nes") {
+        Ok(r) => {
+            debugger.input(&format!("Successfully loaded ROM of size {}", r.size()));
+            Some(r)
+        },
+        Err(f) => {
+            debugger.input(&format!("{}", f));
+            None
+        }
+    };
 
     let mut events_loop = glium::glutin::EventsLoop::new();
     let window = glium::glutin::WindowBuilder::new()
