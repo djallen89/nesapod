@@ -4,8 +4,7 @@ bitflags! {
         const Z = 0b0000_0010;
         const I = 0b0000_0100;
         const D = 0b0000_1000;
-        const SL = 0b0001_0000;
-        const SH = 0b0010_0000;
+        const S = 0b0011_0000;
         const V = 0b0100_0000;
         const N = 0b1000_0000;
     }
@@ -59,4 +58,13 @@ pub enum Code {
 pub struct AsmInstruction {
     code: Code,
     admode: AddressMode
+}
+
+impl AsmInstruction {
+    pub fn new(opcode: u8) -> AsmInstruction {
+        AsmInstruction {
+            code: Code::LDA,
+            admode: AddressMode::Accumulator
+        }
+    }
 }

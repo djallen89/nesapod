@@ -57,6 +57,36 @@ pub enum ChrMem {
     RAM
 }
 
+pub enum Mirroring {
+    Horizontal,
+    Vertical,
+    FourScreenVRAM
+}
+
+pub struct Mapper {
+    code: u8,
+    mirror: Mirroring,
+}
+
+impl Mapper {
+    pub fn nrom() -> Mapper {
+        Mapper {
+            code: 0,
+            mirror: Mirroring::Horizontal
+        }
+    }
+    
+    pub fn write(&self, idx: usize, val: u8) -> Result<(), String> {
+        Ok(())
+    }
+
+    pub fn read(&self, idx: usize) -> usize {
+        match self.code {
+            _ => idx - 0x8000,
+        }
+    }
+}
+
 pub struct Header {
     prg_rom: u8,
     chr_rom: Option<u8>,
@@ -65,6 +95,7 @@ pub struct Header {
     flags_7: u8,
     prg_ram: u8,
     flags_9: u8,
+    mapper: Mapper
 }
 
 impl Header {
@@ -76,7 +107,8 @@ impl Header {
             flags_6: 0,
             flags_7: 0,
             prg_ram: 0,
-            flags_9: 0
+            flags_9: 0,
+            mapper: Mapper::nrom()
         };
         
         let mut magic = [0u8; 4];
@@ -96,11 +128,12 @@ impl Header {
             0 => header.chr_ram = Some(1),
             x => header.chr_rom = Some(x)
         };
+        
         header.flags_6 = reader.next().unwrap()?;
         header.flags_7 = reader.next().unwrap()?;
         header.prg_ram = match reader.next().unwrap()? {
-            0 => 1,
-            x => x //compatibility, see PRG RAM circuit
+            0 => 1, //compatibility, see PRG RAM circuit
+            x => x 
         };
         header.flags_9 = reader.next().unwrap()?;
         let mut padding = [0u8; 6];
@@ -129,45 +162,30 @@ impl Header {
         }
     }
 
-    pub fn chr_mem_type(&self) -> ChrMem {
-        match (self.chr_rom.is_some(), self.chr_ram.is_some()) {
-            (true, false) => ChrMem::ROM,
-            (false, true) => ChrMem::RAM,
-            (_, _) => panic!("Expected either only rom or only ram to be present!")
-        }
-    }
-
-    pub fn make_mem(&self, prg: bool, filebytes: &mut Bytes<File>) -> Result<Vec<u8>, IOError> {
-        let size = if prg {
-            let size = self.prg_rom_size();
-            size
-        } else {
-            let size = self.chr_mem_size();
-            size
-        };
+    /// Create representation of ROM with filled rest of file. On completion file should
+    /// be exhausted.
+    pub fn fill_mem(&self, filebytes: &mut Bytes<File>) -> Result<Vec<u8>, IOError> {
+        let size = self.prg_rom_size() + self.chr_mem_size();
 
         let mut data = Vec::with_capacity(size);
         for i in 0..size {
             let hexpair = filebytes.next().unwrap()?;
             data.push(hexpair);
         }
-        Ok(data)
-    }
 
-    pub fn prg_rom_data(&self, filebytes: &mut Bytes<File>) -> Result<Vec<u8>, IOError> {
-        self.make_mem(true, filebytes)
+        if data.len() == size {
+            Ok(data)
+        } else {
+            Err(IOError::new(
+                ErrorKind::Other,
+                format!("Expected {} bytes, found {}", size, data.len())))
+        }
     }
-
-    pub fn chr_mem_data(&self, filebytes: &mut Bytes<File>) -> Result<Vec<u8>, IOError> {
-        self.make_mem(false, filebytes)
-    }
-}    
+}
 
 pub struct INES {
     header: Header,
-    prg_rom_data: Vec<u8>,
-    chr_mem_data: Vec<u8>,
-    chr_mem_type: ChrMem,
+    data: Vec<u8>,
 }
 
 impl INES {
@@ -180,23 +198,24 @@ impl INES {
         }
         let mut filebytes = file.bytes();
         let header = Header::new(&mut filebytes)?;
-        let prg_rom_data = header.prg_rom_data(&mut filebytes)?;
-        let chr_mem_data = header.chr_mem_data(&mut filebytes)?;
-        let chr_mem_type = header.chr_mem_type();
+        let data = header.fill_mem(&mut filebytes)?;
 
         Ok(INES {
             header: header,
-            prg_rom_data: prg_rom_data,
-            chr_mem_data: chr_mem_data,
-            chr_mem_type: chr_mem_type
+            data: data
         })
-    }
-
-    pub fn chr_mem_type(&self) -> ChrMem {
-        self.chr_mem_type
     }
 
     pub fn size(&self) -> usize {
         16 + self.header.prg_rom_size() + self.header.chr_mem_size()
+    }
+
+    pub fn read(&self, idx: usize) -> u8 {
+        let addr = self.header.mapper.read(idx);
+        self.data[addr]
+    }
+
+    pub fn write(&mut self, idx: usize, val: u8) -> Result<(), String> {
+        self.header.mapper.write(idx, val)
     }
 }

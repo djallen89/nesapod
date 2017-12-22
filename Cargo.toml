@@ -7,6 +7,7 @@ authors = ["Dominick Allen <dominick.allen1989@gmail.com>"]
 conrod = { version = "0.56.0", features = ["winit", "glium"]}
 getopts = "0.2.15"
 bitflags = "1.0.1"
+time = "0.1.38"
 
 [features]
 winit = []
