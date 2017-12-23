@@ -16,7 +16,7 @@ pub enum Registers {
     Accumulator(u8),
     IDX(u8),
     IDY(u8),
-    Status(Flags)
+    Status(u8)
 }
 
 pub enum AddressMode {

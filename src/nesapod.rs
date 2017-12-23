@@ -14,13 +14,14 @@ pub fn main(logname: Option<String>) {
     let ines = match INES::new("assets/instr_test-v5/rom_singles/01-basics.nes") {
         Ok(r) => {
             debugger.input(&format!("Successfully loaded ROM of size {}", r.size()));
-            Some(r)
+            r
         },
         Err(f) => {
             debugger.input(&format!("{}", f));
-            None
+            panic!(f);
         }
     };
+    debugger.input(&format!("Mapper Id: {:?}", ines.mapper()));
 
     let mut events_loop = glium::glutin::EventsLoop::new();
     let window = glium::glutin::WindowBuilder::new()
@@ -129,7 +130,7 @@ pub fn main(logname: Option<String>) {
     }
 
     match debugger.flush() {
-        Ok(_) => println!("Flushed to file"),
+        Ok(_) => {}
         Err(f) => panic!(f)
     }
 }

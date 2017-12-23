@@ -165,21 +165,27 @@ impl Header {
     }
 
     pub fn vs_unisystem(&self) -> bool {
-        //self.flags7 & Flags7::VS_UNISYSTEM
-        false
+        (self.flags_7 & Flags7::VS_UNISYSTEM.bits) == 1
     }
 
     pub fn bus_conflicts(&self) -> bool {
-        //self.flags_10 & Flags10::BUS_CONFLICTS
-        false
+        (self.flags_10 & Flags10::BUS_CONFLICTS.bits) == 1
     }
 
     pub fn mirroring(&self) -> Mirroring {
-        Mirroring::Horizontal
+        match (self.flags_6 & Flags6::MIRROR.bits,
+               self.flags_6 & Flags6::FOURSCREEN.bits) {
+            (0, 0) => Mirroring::Horizontal,
+            (1, 0) => Mirroring::Vertical,
+            _ => Mirroring::FourScreenVRAM,
+        }
     }
 
     pub fn mapper(&self) -> Mapper {
-        Mapper::nrom()
+        let lower = (self.flags_6 & Flags6::LOWERMAPPER.bits) >> 4;
+        let upper = self.flags_7 & Flags7::UPPERMAPPER.bits;
+        let id = upper + lower;
+        Mapper::new(id)
     }
 }
 
@@ -227,5 +233,9 @@ impl INES {
 
     pub fn write(&mut self, idx: u16, val: u8) -> Result<(), String> {
         self.mapper.write_action(idx, val)
+    }
+
+    pub fn mapper(&self) -> Mapper {
+        self.mapper.clone()
     }
 }
