@@ -4,6 +4,9 @@ use std::io::Error as IOError;
 use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::str;
+use core::ines::mappers::Mapper;
+
+mod mappers; 
 
 const MIN_INES_SIZE: u64 = 16 + 16384 + 8192;
 const INES_MAGIC_CODE: [u8; 4] = [0x4E, 0x45, 0x53, 0x1A];
@@ -29,7 +32,6 @@ bitflags! {
     pub struct Flags6: u8 {
         const MIRROR = 0b0000_0001;
         const PRG_RAM = 0b0000_0010;
-        const TRAINER = 0b0000_0100;
         const FOURSCREEN = 0b0000_1000;
         const LOWERMAPPER = 0b1111_0000;
     }
@@ -38,23 +40,24 @@ bitflags! {
 bitflags! {
     pub struct Flags7: u8 {
         const VS_UNISYSTEM = 0b0000_0001;
-        const PLAYCHOICE10 = 0b0000_0010;
-        const NESTWOFORMAT = 0b0000_1100;
+        const _NESTWOFORMAT = 0b0000_1100;
         const UPPERMAPPER = 0b1111_0000;
     }
 }
 
 bitflags! {
     pub struct Flags9: u8 {
-        const TV_SYSTEM = 0b0000_0001;
-        const RESERVED = 0b1111_1110;
+        const _TV_SYSTEM = 0b0000_0001;
+        const _RESERVED = 0b1111_1110;
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum ChrMem {
-    ROM,
-    RAM
+bitflags! {
+    pub struct Flags10: u8 {
+        const _TV_SYSTEM = 0b0000_0011;
+        const _PRG_RAM = 0b0001_0000;
+        const BUS_CONFLICTS = 0b010_0000;
+    }
 }
 
 pub enum Mirroring {
@@ -63,52 +66,30 @@ pub enum Mirroring {
     FourScreenVRAM
 }
 
-pub struct Mapper {
-    code: u8,
-    mirror: Mirroring,
-}
-
-impl Mapper {
-    pub fn nrom() -> Mapper {
-        Mapper {
-            code: 0,
-            mirror: Mirroring::Horizontal
-        }
-    }
-    
-    pub fn write(&self, idx: usize, val: u8) -> Result<(), String> {
-        Ok(())
-    }
-
-    pub fn read(&self, idx: usize) -> usize {
-        match self.code {
-            _ => idx - 0x8000,
-        }
-    }
-}
-
 pub struct Header {
     prg_rom: u8,
-    chr_rom: Option<u8>,
-    chr_ram: Option<u8>,
+    prg_ram: u8,
+    chr_rom: u8,
+    chr_ram: u8,
     flags_6: u8,
     flags_7: u8,
-    prg_ram: u8,
     flags_9: u8,
-    mapper: Mapper
+    flags_10: u8
 }
 
+
+/// prg_rom is number of 16384 byte tables, chr_rom/chr_ram is number of
 impl Header {
     pub fn new(reader: &mut Bytes<File>) -> Result<Header, IOError> {
         let mut header = Header {
             prg_rom: 0,
-            chr_rom: None,
-            chr_ram: None,
+            prg_ram: 0,
+            chr_rom: 0,
+            chr_ram: 0,
             flags_6: 0,
             flags_7: 0,
-            prg_ram: 0,
             flags_9: 0,
-            mapper: Mapper::nrom()
+            flags_10: 0,
         };
         
         let mut magic = [0u8; 4];
@@ -125,24 +106,28 @@ impl Header {
         header.prg_rom = reader.next().unwrap()?;
         let chr_mem = reader.next().unwrap()?;
         match chr_mem {
-            0 => header.chr_ram = Some(1),
-            x => header.chr_rom = Some(x)
+            0 => header.chr_ram = 1,
+            x => header.chr_rom = x
         };
         
         header.flags_6 = reader.next().unwrap()?;
         header.flags_7 = reader.next().unwrap()?;
+
         header.prg_ram = match reader.next().unwrap()? {
             0 => 1, //compatibility, see PRG RAM circuit
             x => x 
         };
+        
         header.flags_9 = reader.next().unwrap()?;
-        let mut padding = [0u8; 6];
-        for n in 0..6 {
+        header.flags_10 = reader.next().unwrap()?;
+        
+        let mut padding = [0u8; 5];
+        for n in 0..5 {
             padding[n] = reader.next().unwrap()?;
         }
 
         //discard 10flags
-        if padding[1..] != [0, 0, 0, 0, 0] { 
+        if padding != [0, 0, 0, 0, 0] { 
             Err(IOError::new(
                 ErrorKind::Other,
                 format!("Expected 5 0 bytes, found {:?}", padding)))
@@ -156,10 +141,7 @@ impl Header {
     }
 
     pub fn chr_mem_size(&self) -> usize {
-        match (self.chr_rom, self.chr_ram) {
-            (Some(x), None) | (None, Some(x)) => x as usize * 8192,
-            (Some(_), Some(_)) | (None, None) => panic!("Expected either only rom or only ram size!")           
-        }
+        (self.chr_rom + self.chr_ram) as usize * 8192
     }
 
     /// Create representation of ROM with filled rest of file. On completion file should
@@ -181,10 +163,33 @@ impl Header {
                 format!("Expected {} bytes, found {}", size, data.len())))
         }
     }
+
+    pub fn vs_unisystem(&self) -> bool {
+        //self.flags7 & Flags7::VS_UNISYSTEM
+        false
+    }
+
+    pub fn bus_conflicts(&self) -> bool {
+        //self.flags_10 & Flags10::BUS_CONFLICTS
+        false
+    }
+
+    pub fn mirroring(&self) -> Mirroring {
+        Mirroring::Horizontal
+    }
+
+    pub fn mapper(&self) -> Mapper {
+        Mapper::nrom()
+    }
 }
 
 pub struct INES {
-    header: Header,
+    vs_unisystem: bool,
+    bus_conflicts: bool,
+    prg_rom_size: usize,
+    chr_mem_size: usize,
+    mirroring: Mirroring,
+    mapper: Mapper,
     data: Vec<u8>,
 }
 
@@ -201,21 +206,26 @@ impl INES {
         let data = header.fill_mem(&mut filebytes)?;
 
         Ok(INES {
-            header: header,
+            vs_unisystem: header.vs_unisystem(),
+            bus_conflicts: header.bus_conflicts(),
+            prg_rom_size: header.prg_rom_size(),
+            chr_mem_size: header.chr_mem_size(),
+            mirroring: header.mirroring(),
+            mapper: header.mapper(),
             data: data
         })
     }
 
     pub fn size(&self) -> usize {
-        16 + self.header.prg_rom_size() + self.header.chr_mem_size()
+        16 + self.prg_rom_size + self.chr_mem_size
     }
 
-    pub fn read(&self, idx: usize) -> u8 {
-        let addr = self.header.mapper.read(idx);
-        self.data[addr]
+    pub fn read(&self, idx: u16) -> u8 {
+        let addr = self.mapper.read_address(idx);
+        self.data[addr as usize]
     }
 
-    pub fn write(&mut self, idx: usize, val: u8) -> Result<(), String> {
-        self.header.mapper.write(idx, val)
+    pub fn write(&mut self, idx: u16, val: u8) -> Result<(), String> {
+        self.mapper.write_action(idx, val)
     }
 }
