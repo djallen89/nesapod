@@ -5,6 +5,7 @@ use conrod::theme::Theme;
 use conrod::color::{BLACK, WHITE, TRANSPARENT};
 use core;
 use core::ines::INES;
+use core::cpu::CPU;
 
 pub fn main(logname: Option<String>) {
     const WIDTH: u32 = 800;
@@ -14,14 +15,19 @@ pub fn main(logname: Option<String>) {
     let ines = match INES::new("assets/instr_test-v5/rom_singles/01-basics.nes") {
         Ok(r) => {
             debugger.input(&format!("Successfully loaded ROM of size {}", r.size()));
+            debugger.input(&format!("Mapper Id: {:?}", r.mapper()));
             r
         },
         Err(f) => {
-            debugger.input(&format!("{}", f));
             panic!(f);
         }
     };
-    debugger.input(&format!("Mapper Id: {:?}", ines.mapper()));
+    let mut emulator = CPU::power_up(ines);
+    match emulator.init() {
+        Ok(r) => debugger.input(&r),
+        Err(f) => debugger.input(&f)
+    }
+
 
     let mut events_loop = glium::glutin::EventsLoop::new();
     let window = glium::glutin::WindowBuilder::new()
@@ -62,6 +68,10 @@ pub fn main(logname: Option<String>) {
 
     'render: loop {
         events.clear();
+        match emulator.step() {
+            Ok(x) => debugger.input(&x),
+            Err(f) => debugger.input(&f)
+        }
 
         // Get all the new events since the last frame.
         events_loop.poll_events(|event| { events.push(event); });
@@ -108,9 +118,7 @@ pub fn main(logname: Option<String>) {
 
             // Message displayed in middle of screen
             counter += 1;
-            match debugger.input(&format!("Counter: {}", counter)) {
-                _ => {}
-            }
+
             let msg = debugger.output();
             widget::Text::new(&msg)
                 .middle_of(ui.window)
@@ -128,6 +136,8 @@ pub fn main(logname: Option<String>) {
             target.finish().unwrap();
         }
     }
+
+    let ines = emulator.shut_down();
 
     match debugger.flush() {
         Ok(_) => {}

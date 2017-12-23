@@ -5,6 +5,7 @@ use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::str;
 use core::ines::mappers::Mapper;
+use core::cpu::CPUResult;
 
 mod mappers; 
 
@@ -147,11 +148,17 @@ impl Header {
     /// Create representation of ROM with filled rest of file. On completion file should
     /// be exhausted.
     pub fn fill_mem(&self, filebytes: &mut Bytes<File>) -> Result<Vec<u8>, IOError> {
-        let size = self.prg_rom_size() + self.chr_mem_size();
-
+        let size = self.prg_rom_size() + (self.chr_rom as usize) * 8192;
         let mut data = Vec::with_capacity(size);
         for i in 0..size {
-            let hexpair = filebytes.next().unwrap()?;
+            let hexpair = match filebytes.next() {
+                Some(x) => x?,
+                None => {
+                    return Err(
+                        IOError::new(ErrorKind::Other,
+                                     format!("Unexpected file end at byte {}", i)))
+                }
+            };
             data.push(hexpair);
         }
 
@@ -223,18 +230,20 @@ impl INES {
     }
 
     pub fn size(&self) -> usize {
-        16 + self.prg_rom_size + self.chr_mem_size
+        self.prg_rom_size + self.chr_mem_size
     }
 
-    pub fn read(&self, idx: u16) -> u8 {
-        let addr = self.mapper.read_address(idx);
-        self.data[addr as usize]
+    pub fn read(&self, idx: usize) -> CPUResult<u8> {
+        let addr = self.mapper.read_address(idx) - self.chr_mem_size;
+        Ok(self.data[addr])
     }
-
-    pub fn write(&mut self, idx: u16, val: u8) -> Result<(), String> {
-        self.mapper.write_action(idx, val)
+    
+    pub fn write(&mut self, idx: usize, val: u8) -> CPUResult<()> {
+        let addr = self.mapper.write_address(idx)?;
+        self.data[addr] = val;
+        Ok(())
     }
-
+    
     pub fn mapper(&self) -> Mapper {
         self.mapper.clone()
     }

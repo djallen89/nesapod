@@ -206,16 +206,27 @@ impl Mapper {
         }
     }
     
-    pub fn write_action(&self, idx: u16, val: u8) -> Result<(), String> {
+    pub fn write_address(&self, idx: usize) -> Result<usize, String> {
         match *self {
             Mapper::NROM => Err("NROM has no banks to switch".to_string()),
-            _ => Ok(())
+            Mapper::SXROM(SxRom::MMC1) => {
+                let address = idx - 0x6000;
+                if address > 0x7FFF {
+                    Err(format!("Can't write to {}", address))
+                } else {
+                    Ok(address)
+                }
+            }
+            x => Err(format!("Not yet equipped to handle {:?}!", x))
         }
     }
 
-    pub fn read_address(&self, idx: u16) -> u16 {
+    pub fn read_address(&self, idx: usize) -> usize {
         match *self {
             Mapper::NROM => idx - 0x8000,
+            Mapper::SXROM(SxRom::MMC1) => {
+                idx - 0x6000
+            }
             x => panic!(format!("Not yet equipped to handle {:?}!", x))
         }
     }
