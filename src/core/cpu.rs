@@ -1,5 +1,12 @@
+use core::ines::INES;
+
+pub const POWERUP_S: u8 = 0xFD;
+pub const MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
+pub const CPU_FREQ_NTSC: f64 = 1.789773; //MHz
+pub const RESET_VECTOR: u16 = 0xFFFC;
+
 bitflags! {
-    struct Flags: u8 {
+    struct StatusFlags: u8 {
         const C = 0b0000_0001;
         const Z = 0b0000_0010;
         const I = 0b0000_0100;
@@ -8,15 +15,6 @@ bitflags! {
         const V = 0b0100_0000;
         const N = 0b1000_0000;
     }
-}
-
-pub enum Registers {
-    ProgramCounter(u16),
-    StackPointer(u8),
-    Accumulator(u8),
-    IDX(u8),
-    IDY(u8),
-    Status(u8)
 }
 
 pub enum AddressMode {
@@ -61,10 +59,40 @@ pub struct AsmInstruction {
 }
 
 impl AsmInstruction {
-    pub fn new(opcode: u8) -> AsmInstruction {
+    pub fn new(code: Code, admode: AddressMode) -> AsmInstruction {
         AsmInstruction {
-            code: Code::LDA,
-            admode: AddressMode::Accumulator
+            code: code,
+            admode: admode
         }
+    }
+}
+
+pub struct CPU {
+    program_counter: u16,
+    stack_pointer: u8,
+    accumulator: u8,
+    x: u8,
+    y: u8,
+    status_register: StatusFlags,
+    ram: [u8; 8192],
+    cartridge: INES
+}
+
+impl CPU {
+    pub fn power_up(ines: INES) -> CPU {
+        CPU {
+            program_counter: RESET_VECTOR,
+            stack_pointer: POWERUP_S,
+            accumulator: 0,
+            x: 0,
+            y: 0,
+            status_register: StatusFlags::I | StatusFlags::S,
+            ram: [0; 8192],
+            cartridge: ines
+        }
+    }
+
+    pub fn shut_down(self) -> INES {
+        self.cartridge
     }
 }

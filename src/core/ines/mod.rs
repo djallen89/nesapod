@@ -165,11 +165,11 @@ impl Header {
     }
 
     pub fn vs_unisystem(&self) -> bool {
-        (self.flags_7 & Flags7::VS_UNISYSTEM.bits) == 1
+        self.flags_7 & Flags7::VS_UNISYSTEM.bits == 1
     }
 
     pub fn bus_conflicts(&self) -> bool {
-        (self.flags_10 & Flags10::BUS_CONFLICTS.bits) == 1
+        self.flags_10 & Flags10::BUS_CONFLICTS.bits == 1
     }
 
     pub fn mirroring(&self) -> Mirroring {
@@ -182,7 +182,7 @@ impl Header {
     }
 
     pub fn mapper(&self) -> Mapper {
-        let lower = (self.flags_6 & Flags6::LOWERMAPPER.bits) >> 4;
+        let lower = self.flags_6 & Flags6::LOWERMAPPER.bits >> 4;
         let upper = self.flags_7 & Flags7::UPPERMAPPER.bits;
         let id = upper + lower;
         Mapper::new(id)
