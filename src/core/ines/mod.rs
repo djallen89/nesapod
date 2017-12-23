@@ -235,12 +235,12 @@ impl INES {
 
     pub fn read(&self, idx: usize) -> CPUResult<u8> {
         let addr = self.mapper.read_address(idx) - self.chr_mem_size;
-        Ok(self.data[addr])
+        Ok(self.data[addr as usize])
     }
     
     pub fn write(&mut self, idx: usize, val: u8) -> CPUResult<()> {
         let addr = self.mapper.write_address(idx)?;
-        self.data[addr] = val;
+        self.data[addr as usize] = val;
         Ok(())
     }
     
