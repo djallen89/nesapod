@@ -13,7 +13,8 @@ bitflags! {
         const Z = 0b0000_0010;
         const I = 0b0000_0100;
         const D = 0b0000_1000;
-        const S = 0b0011_0000;
+        const B = 0b0001_0000;
+        const S = 0b0010_0000;
         const V = 0b0100_0000;
         const N = 0b1000_0000;
     }
@@ -199,8 +200,41 @@ impl CPU {
         }
     }
 
-    pub fn write(&mut self, address: u16) -> CPUResult<String> {
-        Ok(format!("FOO"))
+    pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
+        match address as usize {
+            0x0000 ... 0x1FFF => {
+                self.ram[(address % 2048) as usize] = val;
+                Ok(format!("Wrote {:x} to address {:x}", val, address))
+            },
+            0x2000 ... 0x401F => {
+                Err(format!("Not implemented!"))
+            },
+            0x4020 ... 0xFFFF => {
+                self.cartridge.write(address as usize, val)?;
+                Ok(format!("Wrote {:x} to address {:x}", val, address))
+            },
+            _ => Err(format!("I dunno lol"))
+        }
+    }
+
+    pub fn stack_push(&mut self, val: u8) -> CPUResult<String> {
+        let addr = (self.stack_pointer as u16) + 0x0100;
+        match self.write(addr, val) {
+            Ok(s) => {
+                self.stack_decrement()?;
+                Ok(s)
+            },
+            Err(f) => Err(f)
+        }
+    }
+
+    pub fn stack_decrement(&mut self) -> CPUResult<String> {
+        if self.stack_pointer == 0 {
+            Err(format!("Stack overflow!"))
+        } else {
+            self.stack_pointer -= 1;
+            Ok(format!(""))
+        }
     }
 
     #[inline(always)]
@@ -496,14 +530,41 @@ impl CPU {
             TAX, TXA, TAY, TYA, TSX, TXS, 
             PHA, PLA, PHP, PLP,
             JMP, JSR, RTS, RTI,*/
-            /*(Code::JMP, AddressMode::Absolute(idx)) | (Code::JMP, AddressMode::Indirect(idx)) => {
+            (Code::JMP, AddressMode::Absolute(idx)) => {
+                self.counter += 3;
                 self.pc = idx;
                 Ok(format!("Set pc to {:x}", idx))
-            },*/
-            /*
-            SEC, SED, SEI,
-            CLC, CLD, CLI, CLV, 
-            NOP, BRK */
+            },
+            (Code::JMP, AddressMode::Indirect(idx)) => {
+                self.counter += 5;
+                let lower = self.read(idx)? as u16;
+                println!("{}", idx);
+                let upper = (self.read(idx + 1)?  as u16) << 8;
+                let addr = upper + lower;
+                self.pc = addr;
+                Ok(format!("Set pc to {:x}", addr))
+            },
+            /* SEC, SED, SEI,*/
+            (Code::SEI, AddressMode::Implied) => {
+                self.counter += 2;
+                self.status_register = self.status_register | StatusFlags::I;
+                Ok(format!("Set Interrupt Disable to 1"))
+            }
+            /* CLC, CLD, CLI, CLV, */
+            /* NOP, BRK */
+            (Code::BRK, AddressMode::Implied) => {
+                if self.stack_pointer < 2 {
+                    Err(format!("Stack overflowed!"))
+                } else {
+                    self.counter += 7;
+                    let upper = ((self.pc & 0xFF00) >> 8) as u8;
+                    self.stack_push(upper)?;
+                    let lower = (self.pc & 0x00FF) as u8;
+                    self.stack_push(lower);
+                    let push = self.status_register | StatusFlags::S | StatusFlags::B;
+                    self.stack_push(push.bits)
+                }
+            },
             _ => Err(format!("{:?} not implemented", instruction))
         }
     }
@@ -534,10 +595,8 @@ impl CPU {
     }
 
     pub fn init(&mut self) -> CPUResult<String> {
-        let upper = (self.read(self.pc)? as u16) << 8;
-        let lower = self.read(self.pc)? as u16;
         let instruction = Instruction {
-            mnemonic: Code::JMP, address: AddressMode::Indirect(upper + lower)
+            mnemonic: Code::JMP, address: AddressMode::Indirect(self.pc)
         };
         self.execute(instruction)
     }
