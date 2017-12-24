@@ -13,23 +13,6 @@ const MIN_INES_SIZE: u64 = 16 + 16384 + 8192;
 const INES_MAGIC_CODE: [u8; 4] = [0x4E, 0x45, 0x53, 0x1A];
 
 bitflags! {
-    pub struct Opcode: u8 {
-        const LOW = 0b0000_1111;
-        const HIGH = 0b1111_0000;
-    }
-}
-
-pub enum Operand {
-    Single(u8),
-    Double(u8,u8)
-}
-
-pub struct CpuInstruction {
-    opcode: Opcode,
-    operand: Operand
-}
-
-bitflags! {
     pub struct Flags6: u8 {
         const MIRROR = 0b0000_0001;
         const PRG_RAM = 0b0000_0010;
@@ -197,11 +180,11 @@ impl Header {
 }
 
 pub struct INES {
-    vs_unisystem: bool,
-    bus_conflicts: bool,
+    _vs_unisystem: bool,
+    _bus_conflicts: bool,
     prg_rom_size: usize,
     chr_mem_size: usize,
-    mirroring: Mirroring,
+    _mirroring: Mirroring,
     mapper: Mapper,
     data: Vec<u8>,
 }
@@ -219,11 +202,11 @@ impl INES {
         let data = header.fill_mem(&mut filebytes)?;
 
         Ok(INES {
-            vs_unisystem: header.vs_unisystem(),
-            bus_conflicts: header.bus_conflicts(),
+            _vs_unisystem: header.vs_unisystem(),
+            _bus_conflicts: header.bus_conflicts(),
             prg_rom_size: header.prg_rom_size(),
             chr_mem_size: header.chr_mem_size(),
-            mirroring: header.mirroring(),
+            _mirroring: header.mirroring(),
             mapper: header.mapper(),
             data: data
         })

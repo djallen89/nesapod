@@ -1,5 +1,6 @@
 use core::ines::INES;
-use std::{u16, mem};
+use std::{u8, u16, mem};
+use std::num::Wrapping;
 
 pub const POWERUP_S: u8 = 0xFD;
 pub const MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
@@ -16,6 +17,17 @@ bitflags! {
         const V = 0b0100_0000;
         const N = 0b1000_0000;
     }
+}
+
+pub fn counter_inc(x: u16, y: u8) -> u8 {
+    //x + y > c  | x + y < c
+    //c < x + y  | c > x + y
+    //c - x < y  | c - x > y
+    if u8::MAX - ((x & 0x0F) as u8) > y {
+        0
+    } else {
+        1
+    }        
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -97,7 +109,7 @@ impl Code {
     #[inline(always)]
     pub fn stack_set_clear(upper_nybble: u8) -> Code {
         use self::Code::{PHP, CLC, PLP, SEC, PHA, CLI, PLA, SEI,
-                   DEY, TYA, TAY, CLV, INY, CLD, INX, SED};
+                         DEY, TYA, TAY, CLV, INY, CLD, INX, SED};
                    
         match upper_nybble {
             0x00 => PHP,
@@ -136,6 +148,7 @@ impl Instruction {
 pub type CPUResult<T> = Result<T, String>;
 
 pub struct CPU {
+    counter: u16,
     pc: u16,
     stack_pointer: u8,
     accumulator: u8,
@@ -150,6 +163,7 @@ impl CPU {
     pub fn power_up(ines: INES) -> CPU {
         let pc = RESET_VECTOR;
         CPU {
+            counter: 0,
             pc: pc,
             stack_pointer: POWERUP_S,
             accumulator: 0,
@@ -362,6 +376,11 @@ impl CPU {
             (0x0C, 0x02) => (Code::BIT, self.absolute()?),
             (0x0C, 0x04) => (Code::JMP, self.absolute()?),
             (0x0C, 0x06) => (Code::JMP, self.indirect()?),
+            (0x0C, 0x08) => (Code::STY, self.absolute()?),
+            (0x0C, 0x0A) => (Code::LDY, self.absolute()?),
+            (0x0C, 0x0B) => (Code::LDY, self.absolute_indexed_by_x()?),
+            (0x0C, 0x0C) => (Code::CPY, self.absolute()?),
+            (0x0C, 0x0E) => (Code::CPX, self.absolute()?),
             (0x0D, x) => {
                 let address = if x % 2 == 0 {
                     self.absolute()?
@@ -369,6 +388,35 @@ impl CPU {
                     self.absolute_indexed_by_x()?
                 };
                 (Code::arith_logic(x), address)
+            },
+            (0x0E, x @ 0x00 ... 0x07) => {
+                let address = if x % 2 == 0 {
+                    self.absolute()?
+                } else {
+                    self.absolute_indexed_by_x()?
+                };
+                match x / 2 {
+                    0 => (Code::ASL, address),
+                    1 => (Code::ROL, address),
+                    2 => (Code::LSR, address),
+                    3 => (Code::ROR, address),
+                    _ => panic!(format!("Bad opcode; Found {:x}", x))
+                }
+            },
+            (0x0E, 0x08) => (Code::STX, self.absolute()?),
+            (0x0E, 0x0A) => (Code::LDX, self.absolute()?),
+            (0x0E, 0x0B) => (Code::LDX, self.absolute_indexed_by_y()?),
+            (0x0E, x @ 0x0C ... 0x0F) => {
+                let address = if x % 2 == 0 {
+                    self.absolute()?
+                } else {
+                    self.absolute_indexed_by_x()?
+                };
+                match x / 2 {
+                    6 => (Code::DEC, address),
+                    7 => (Code::INC, address),
+                    _ => panic!(format!("Bad opcode; Found {:x}", x))
+                }
             },
             _ => return Err(format!("Undefined opcode {:x}", c))
         };
@@ -378,12 +426,84 @@ impl CPU {
         })
     }
 
+    pub fn load(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {        
+        let (cycles, val) = match a {
+            AddressMode::Immediate(n) => (2, n),
+            AddressMode::ZeroPage(u) => (3, self.read(u as u16)?),
+            AddressMode::ZPIndexedX(u) => (4, self.read((u + self.x) as u16)?),
+            AddressMode::ZPIndexedY(u) => (4, self.read((u + self.y) as u16)?),
+            AddressMode::Absolute(addr) => (4, self.read(addr)?),
+            AddressMode::AbsIndexedX(addr) => {
+                let counter = 4 + counter_inc(addr, self.x);
+                let addr = addr + (self.x as u16);
+                (counter, self.read(addr)?)
+            },
+            AddressMode::AbsIndexedY(addr) => {
+                let counter = counter_inc(addr, self.y);
+                let addr = addr + (self.x as u16);
+                (counter, self.read(addr)?)
+            },
+            AddressMode::ZPIndexedIndirect(u) => {
+                let addr = Wrapping(u) + Wrapping(self.x);
+                (6, self.read(addr.0 as u16)?)
+            },
+            AddressMode::ZPIndirectIndexed(u) => {
+                let counter = 5 + counter_inc(u as u16, self.y);
+                (counter, self.read((u + self.y) as u16)?)
+            },
+            x => {
+                return Err(format!("Unexpected addressing mode {:?}", a))
+            }
+        };
+        self.counter += cycles as u16;
+        match m {
+            Code::LDA => self.accumulator = val,
+            Code::LDX => self.x = val,
+            Code::LDY => self.y = val,
+            x => panic!(format!("Expected Load; Found {:?}", x))
+        }
+
+        Ok(format!("Loaded {} into {:?}", val, m))
+    }
+
     pub fn execute(&mut self, instruction: Instruction) -> CPUResult<String> {
+        /* Accumulator,
+        Implied,
+        Immediate(u8),
+        Absolute(u16, bool),
+        ZeroPage(u8),
+        Relative(i8),
+        AbsIndexedX(u16),
+        AbsIndexedY(u16),
+        ZPIndexedX(u8),
+        ZPIndexedY(u8),
+        ZPIndexedIndirect(u8),
+        ZPIndirectIndexed(u8),
+        Indirect(u16) */
         match (instruction.mnemonic, instruction.address) {
-            (Code::JMP, AddressMode::Absolute(idx)) => {
+            /* LDA, LDX, LDY, */
+            (m @ Code::LDA, a) | (m @ Code::LDX, a) | (m @ Code::LDY, a) => self.load(m, a),
+            /* STA, STX, STY, 
+            ADC, SBC, 
+            INC, INX, INY, 
+            DEC, DEX, DEY, 
+            ASL, LSR,
+            ROL, ROR, 
+            AND, ORA, EOR, 
+            CMP, CPX, CPY, 
+            BIT, 
+            BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS, 
+            TAX, TXA, TAY, TYA, TSX, TXS, 
+            PHA, PLA, PHP, PLP,
+            JMP, JSR, RTS, RTI,*/
+            /*(Code::JMP, AddressMode::Absolute(idx)) | (Code::JMP, AddressMode::Indirect(idx)) => {
                 self.pc = idx;
                 Ok(format!("Set pc to {:x}", idx))
-            },
+            },*/
+            /*
+            SEC, SED, SEI,
+            CLC, CLD, CLI, CLV, 
+            NOP, BRK */
             _ => Err(format!("{:?} not implemented", instruction))
         }
     }

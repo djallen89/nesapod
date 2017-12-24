@@ -171,10 +171,6 @@ pub enum Mapper {
 }
 
 impl Mapper {
-    pub fn nrom() -> Mapper {
-        Mapper::NROM
-    }
-    
     pub fn new(id: u8) -> Mapper {
         match id {
             0 => Mapper::NROM,
