@@ -67,11 +67,12 @@ pub fn main(logname: Option<String>) {
 
     'render: loop {
         events.clear();
-        match emulator.step() {
-            Ok(x) => debugger.input(&x),
-            Err(f) => debugger.input(&f)
-        }
-
+        let msg = match emulator.step() {
+            Ok(x) => format!("{:x}: {} ; ({} cycles)", emulator.get_pc(), x, emulator.get_counter()),
+            Err(f) => format!("{:x}: {}", emulator.get_pc(), f)
+        };
+        debugger.input(&msg);
+        
         // Get all the new events since the last frame.
         events_loop.poll_events(|event| { events.push(event); });
 

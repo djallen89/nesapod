@@ -1,11 +1,12 @@
 use core::ines::INES;
-use std::{u8, u16, mem};
+use std::{u8, u16};
 use std::num::Wrapping;
 
 pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
 pub const RESET_VECTOR: u16 = 0xFFFC;
+pub const STACK_REGION: u16 = 0x01A0;
 
 bitflags! {
     struct StatusFlags: u8 {
@@ -46,12 +47,6 @@ pub enum AddressMode {
     ZPIndexedIndirect(u8),
     ZPIndirectIndexed(u8),
     Indirect(u16)
-}
-
-impl AddressMode {
-    pub fn _size(&self) -> usize {
-        mem::size_of::<AddressMode>()
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -140,12 +135,6 @@ pub struct Instruction {
     address: AddressMode
 }
 
-impl Instruction {
-    pub fn _size(&self) -> u8 {
-        self.address._size() as u8
-    }
-}
-
 pub type CPUResult<T> = Result<T, String>;
 
 pub struct CPU {
@@ -190,8 +179,8 @@ impl CPU {
             0x0000 ... 0x1FFF => {
                 Ok(self.ram[(address % 2048) as usize])
             },
-            0x2000 ... 0x401F => {
-                Err(format!("Not implemented!"))
+            a @ 0x2000 ... 0x401F => {
+                Err(format!("Access to {:x} not yet implemented!", a))
             },
             0x4020 ... 0xFFFF => {
                 self.cartridge.read(address as usize)
@@ -217,8 +206,26 @@ impl CPU {
         }
     }
 
-    pub fn stack_push(&mut self, val: u8) -> CPUResult<String> {
-        let addr = (self.stack_pointer as u16) + 0x0100;
+    fn stack_decrement(&mut self) -> CPUResult<()> {
+        if self.stack_pointer == 0 {
+            Err(format!("Stack overflow!"))
+        } else {
+            self.stack_pointer -= 1;
+            Ok(())
+        }
+    }
+
+    fn stack_increment(&mut self) -> CPUResult<()> {
+        if self.stack_pointer == 255 {
+            Err(format!("Stack underflow!"))
+        } else {
+            self.stack_pointer += 1;
+            Ok(())
+        }
+    }
+    
+    fn stack_push(&mut self, val: u8) -> CPUResult<String> {
+        let addr = (self.stack_pointer as u16) + STACK_REGION;
         match self.write(addr, val) {
             Ok(s) => {
                 self.stack_decrement()?;
@@ -228,78 +235,72 @@ impl CPU {
         }
     }
 
-    pub fn stack_decrement(&mut self) -> CPUResult<String> {
-        if self.stack_pointer == 0 {
-            Err(format!("Stack overflow!"))
-        } else {
-            self.stack_pointer -= 1;
-            Ok(format!(""))
+    fn stack_pop(&mut self) -> CPUResult<u8> {
+        let addr = (self.stack_pointer as u16) + STACK_REGION;
+        match self.read(addr) {
+            Ok(u) => {
+                self.stack_increment()?;
+                Ok(u)
+            },
+            Err(f) => Err(f)
         }
     }
 
-    #[inline(always)]
-    pub fn absolute_helper(&self) -> CPUResult<u16> {
+    fn absolute_helper(&self) -> CPUResult<u16> {
         let upper_byte = (self.read(self.pc + 1)? as u16) << 8;
         let lower_byte = self.read(self.pc + 2)? as u16;
         Ok(upper_byte + lower_byte)
     }
 
-    #[inline(always)]
-    pub fn absolute(&self) -> CPUResult<AddressMode> {
+    fn absolute(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::Absolute(self.absolute_helper()?))
     }
 
-    #[inline(always)]
-    pub fn absolute_indexed_by_x(&self) -> CPUResult<AddressMode> {
+    fn absolute_indexed_by_x(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::AbsIndexedX(self.absolute_helper()?))
     }
 
-    #[inline(always)]
-    pub fn absolute_indexed_by_y(&self) -> CPUResult<AddressMode> {
+    fn absolute_indexed_by_y(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::AbsIndexedY(self.absolute_helper()?))
     }
 
-    #[inline(always)]
-    pub fn indirect(&self) -> CPUResult<AddressMode> {
+    fn indirect(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::Indirect(self.absolute_helper()?))
     }
 
-    #[inline(always)]
-    pub fn immediate(&self) -> CPUResult<AddressMode> {
+    fn immediate(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::Immediate(self.read(self.pc + 1)?))
     }
     
-    #[inline(always)]
-    pub fn relative(&self) -> CPUResult<AddressMode> {
+    fn relative(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::Relative(self.read(self.pc + 1)? as i8))
     }
 
-    #[inline(always)]
-    pub fn indexed_indirect(&self) -> CPUResult<AddressMode> {
+    fn indexed_indirect(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::ZPIndexedIndirect(self.read(self.pc + 1)?))
     }
     
-    #[inline(always)]
-    pub fn indirect_indexed_by_y(&self) -> CPUResult<AddressMode> {
+    fn indirect_indexed_by_y(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::ZPIndirectIndexed(self.read(self.pc + 1)?))
     }
 
-    #[inline(always)]
-    pub fn zero_page(&self) -> CPUResult<AddressMode> {
+    fn zero_page(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::ZeroPage(self.read(self.pc + 1)?))
     }
 
-    #[inline(always)]
-    pub fn zero_page_indexed_by_x(&self) -> CPUResult<AddressMode> {
+    fn zero_page_indexed_by_x(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::ZPIndexedX(self.read(self.pc + 1)?))
     }
 
-    #[inline(always)]
-    pub fn zero_page_indexed_by_y(&self) -> CPUResult<AddressMode> {
+    fn zero_page_indexed_by_y(&self) -> CPUResult<AddressMode> {
         Ok(AddressMode::ZPIndexedY(self.read(self.pc + 1)?))
     }
 
-    pub fn make_instruction(&self, c: u8) -> CPUResult<Instruction> {
+    fn wrap_address(u: u8, v: u8) -> u16 {
+        (Wrapping(u) + Wrapping(v)).0 as u16
+    }
+
+    fn make_instruction(&self, c: u8) -> CPUResult<Instruction> {
         let implied = AddressMode::Implied;
         let lower = c & 0x0F;
         let upper = (c & 0xF0) >> 4;
@@ -460,35 +461,36 @@ impl CPU {
         })
     }
 
-    pub fn load(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {        
-        let (cycles, val) = match a {
-            AddressMode::Immediate(n) => (2, n),
-            AddressMode::ZeroPage(u) => (3, self.read(u as u16)?),
-            AddressMode::ZPIndexedX(u) => (4, self.read((u + self.x) as u16)?),
-            AddressMode::ZPIndexedY(u) => (4, self.read((u + self.y) as u16)?),
-            AddressMode::Absolute(addr) => (4, self.read(addr)?),
+    fn load(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {        
+        let (bytes, cycles, val) = match a {
+            AddressMode::Immediate(n) => (2, 2, n),
+            AddressMode::ZeroPage(u) => (2, 3, self.read(u as u16)?),
+            AddressMode::ZPIndexedX(u) => (2, 4, self.read((u + self.x) as u16)?),
+            AddressMode::ZPIndexedY(u) => (2, 4, self.read((u + self.y) as u16)?),
+            AddressMode::Absolute(addr) => (3, 4, self.read(addr)?),
             AddressMode::AbsIndexedX(addr) => {
                 let counter = 4 + counter_inc(addr, self.x);
                 let addr = addr + (self.x as u16);
-                (counter, self.read(addr)?)
+                (3, counter, self.read(addr)?)
             },
             AddressMode::AbsIndexedY(addr) => {
                 let counter = counter_inc(addr, self.y);
                 let addr = addr + (self.x as u16);
-                (counter, self.read(addr)?)
+                (3, counter, self.read(addr)?)
             },
             AddressMode::ZPIndexedIndirect(u) => {
-                let addr = Wrapping(u) + Wrapping(self.x);
-                (6, self.read(addr.0 as u16)?)
+                let addr = CPU::wrap_address(u, self.x);
+                (2, 6, self.read(addr)?)
             },
             AddressMode::ZPIndirectIndexed(u) => {
                 let counter = 5 + counter_inc(u as u16, self.y);
-                (counter, self.read((u + self.y) as u16)?)
+                (2, counter, self.read((u + self.y) as u16)?)
             },
             _=> {
                 return Err(format!("Unexpected addressing mode {:?}", a))
             }
         };
+        self.pc += bytes;
         self.counter += cycles as u16;
         match m {
             Code::LDA => self.accumulator = val,
@@ -500,36 +502,141 @@ impl CPU {
         Ok(format!("Loaded {} into {:?}", val, m))
     }
 
+    pub fn store(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {
+        let val = match m {
+            Code::STA => self.accumulator,
+            Code::STX => self.x,
+            Code::STY => self.y,
+            x => panic!(format!("Expected Load; Found {:?}", x))
+        };
+        
+        let (bytes, cycles, addr) = match a {
+            AddressMode::ZeroPage(u) => (2, 3, u as u16),
+            AddressMode::ZPIndexedX(u) => (2, 4, (u + self.x) as u16),
+            AddressMode::ZPIndexedY(u) => (2, 4, (u + self.y) as u16),
+            AddressMode::Absolute(addr) => (3, 4, addr),
+            AddressMode::AbsIndexedX(addr) => (3, 5, addr + (self.x as u16)),
+            AddressMode::AbsIndexedY(addr) => (3, 5, addr + (self.y as u16)),
+            AddressMode::ZPIndexedIndirect(u) => (2, 6, CPU::wrap_address(u, self.x)),
+            AddressMode::ZPIndirectIndexed(u) => (2, 6, (u + self.y) as u16),
+            _=> return Err(format!("Unexpected addressing mode {:?}", a))
+        };
+        self.write(addr, val)?;
+        self.pc += bytes;
+        self.counter += cycles as u16;
+
+        Ok(format!("Stored {:?} into {}", m, val))
+    }
+
+    #[inline(always)]
+    pub fn wrapped_inc(&mut self, u: u8) -> CPUResult<u8> {
+        let val = (Wrapping(u) + Wrapping(1)).0;
+        if val == 0 {
+            self.status_register | StatusFlags::Z;
+        } else if (val & 0b1000_0000) == 1 {
+            self.status_register | StatusFlags::N;
+        }
+        Ok(val)
+    }
+
+    pub fn inc(&mut self, a: AddressMode) -> CPUResult<String> {
+        let (bytes, cycles, address) = match a {
+            AddressMode::ZeroPage(u) => (2, 5, u as u16),
+            AddressMode::ZPIndexedX(u) => (2, 6, (u + self.x) as u16),
+            AddressMode::Absolute(addr) => (3, 6, addr),
+            AddressMode::AbsIndexedX(addr) => (3, 7, addr + (self.x as u16)),
+            x => return Err(format!("Impossible addressing mode {:?}", x))
+        };
+        self.pc += bytes;
+        self.counter += cycles;
+        let u = self.read(address)?;
+        let val = self.wrapped_inc(u)?;
+        self.write(address, val)
+    }
+
+    pub fn inc_reg(&mut self, m: Code) -> CPUResult<String> {
+        self.pc += 1;
+        self.counter += 2;
+        match m {
+            Code::INX => {
+                let u = self.x;
+                let val = self.wrapped_inc(u)?;
+                self.x = val;
+                Ok(format!("Incremented X by 1 for a result of {}", self.x))
+            },
+            _ => {
+                let u = self.y;
+                let val = self.wrapped_inc(u)?;
+                self.y = val;
+                Ok(format!("Incremented Y by 1 for a result of {}", self.y))
+            }
+        }
+    }
+
+    fn lsr_acc(&mut self) -> CPUResult<String> {
+        self.status_register.bits |= self.accumulator & 0b0000_0001;
+        self.accumulator >>= 1;
+        if self.accumulator == 0 {
+            self.status_register |= StatusFlags::Z;
+        }
+        self.pc += 1;
+        self.counter += 2;
+        Ok(format!("Shifted Accumulator right for result {:x}", self.accumulator))
+    }
+
+    fn lsr_mem(&mut self, a: AddressMode) -> CPUResult<String> {
+        let (bytes, cycles, addr) = match a {
+            AddressMode::ZeroPage(u) => (2, 5, u as u16),
+            AddressMode::ZPIndexedX(u) => (2, 6, (u + self.x) as u16),
+            AddressMode::Absolute(addr) => (3, 6, addr),
+            AddressMode::AbsIndexedX(addr) => (3, 7, addr + (self.x as u16)),
+            _ => return Err(format!("Unexpected addressing mode {:?}", a))
+        };
+        let mut val = self.read(addr)?;
+        self.status_register.bits |= val & 0b0000_0001;
+        val >>= 1;
+        if val == 0 {
+            self.status_register |= StatusFlags::Z;
+        }
+        self.write(addr, val)?;
+        self.pc += bytes;
+        self.counter += cycles;
+        Ok(format!("Shifted {:x} right for result {:x}", addr, val))
+    }
+
     pub fn execute(&mut self, instruction: Instruction) -> CPUResult<String> {
-        /* Accumulator,
-        Implied,
-        Immediate(u8),
-        Absolute(u16, bool),
-        ZeroPage(u8),
-        Relative(i8),
-        AbsIndexedX(u16),
-        AbsIndexedY(u16),
-        ZPIndexedX(u8),
-        ZPIndexedY(u8),
-        ZPIndexedIndirect(u8),
-        ZPIndirectIndexed(u8),
-        Indirect(u16) */
         match (instruction.mnemonic, instruction.address) {
             /* LDA, LDX, LDY, */
             (m @ Code::LDA, a) | (m @ Code::LDX, a) | (m @ Code::LDY, a) => self.load(m, a),
-            /* STA, STX, STY, 
-            ADC, SBC, 
-            INC, INX, INY, 
-            DEC, DEX, DEY, 
-            ASL, LSR,
-            ROL, ROR, 
-            AND, ORA, EOR, 
-            CMP, CPX, CPY, 
-            BIT, 
-            BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS, 
-            TAX, TXA, TAY, TYA, TSX, TXS, 
-            PHA, PLA, PHP, PLP,
-            JMP, JSR, RTS, RTI,*/
+            /* STA, STX, STY, */
+            (m @ Code::STA, a) | (m @ Code::STX, a) | (m @ Code::STY, a) => self.store(m, a),
+            /* ADC, SBC, */
+            
+            /* INC */ 
+            (Code::INC, a) => self.inc(a),
+            /*INX, INY */
+            (m @ Code::INX, AddressMode::Implied) |
+            (m @ Code::INY, AddressMode::Implied) => self.inc_reg(m),
+            /* DEC, DEX, DEY, */
+            
+            /* ASL, LSR */
+            (Code::LSR, AddressMode::Accumulator) => self.lsr_acc(),
+            (Code::LSR, a) => self.lsr_mem(a),
+            /* ROL, ROR */
+            
+            /* AND, ORA, EOR, */
+            
+            /* CMP, CPX, CPY, */
+            
+            /* BIT, */
+            
+            /* BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS, */
+            
+            /* TAX, TXA, TAY, TYA, TSX, TXS, */
+            
+            /* PHA, PLA, PHP, PLP, */
+            
+            /* JMP */
             (Code::JMP, AddressMode::Absolute(idx)) => {
                 self.counter += 3;
                 self.pc = idx;
@@ -538,15 +645,29 @@ impl CPU {
             (Code::JMP, AddressMode::Indirect(idx)) => {
                 self.counter += 5;
                 let lower = self.read(idx)? as u16;
-                println!("{}", idx);
                 let upper = (self.read(idx + 1)?  as u16) << 8;
                 let addr = upper + lower;
                 self.pc = addr;
                 Ok(format!("Set pc to {:x}", addr))
             },
+            /*JSR */
+
+            /*RTS, RTI, */
+            (Code::RTI, AddressMode::Implied) => {
+                let flags = self.stack_pop()?;
+                self.status_register.bits = flags;
+                /* let lower = self.stack_pop()? as u16;
+                let upper = (self.stack_pop()? as u16) << 8; */
+                let upper = (self.stack_pop()? as u16) << 8;
+                let lower = self.stack_pop()? as u16;
+                self.pc = upper + lower;
+                self.counter += 6;
+                Ok(format!("Set pc to {:x} from interrupt", self.pc))
+            }
             /* SEC, SED, SEI,*/
             (Code::SEI, AddressMode::Implied) => {
                 self.counter += 2;
+                self.pc += 1;
                 self.status_register = self.status_register | StatusFlags::I;
                 Ok(format!("Set Interrupt Disable to 1"))
             }
@@ -561,37 +682,31 @@ impl CPU {
                     self.stack_push(upper)?;
                     let lower = (self.pc & 0x00FF) as u8;
                     self.stack_push(lower)?;
-                    let push = self.status_register | StatusFlags::S | StatusFlags::B;
-                    self.stack_push(push.bits)
+                    
+                    let irq_lower = self.read(0xFFFE)? as u16;
+                    let irq_upper = (self.read(0xFFFF)? as u16) << 8;
+                    self.pc = irq_upper + irq_lower;
+                    
+                    let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                    self.stack_push(flags.bits)
                 }
             },
             _ => Err(format!("{:?} not implemented", instruction))
         }
     }
 
+    pub fn get_pc(&self) -> u16 {
+        self.pc
+    }
+
+    pub fn get_counter(&self) -> u16 {
+        self.counter
+    }
+
     pub fn step(&mut self) -> CPUResult<String> {
         let code = self.read(self.pc)?;
-        println!("{:x}: {:x}", self.pc, code);
-        match self.make_instruction(code) {
-            Ok(x) => {
-                let result = self.execute(x);
-                if self.pc == u16::MAX {
-                    self.pc = 0x6000;
-                    return Err(format!("max size counter, last byte {:?}", result))
-                } else {
-                    self.pc += 1;
-                    result
-                }
-            },
-            Err(f) => {
-                if self.pc == u16::MAX {
-                    self.pc = 0x8000;
-                } else {
-                    self.pc += 1;
-                }
-                Err(f)
-            }
-        }
+        let instruction = self.make_instruction(code)?;
+        self.execute(instruction)
     }
 
     pub fn init(&mut self) -> CPUResult<String> {
