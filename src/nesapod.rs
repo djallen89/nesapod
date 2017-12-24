@@ -64,7 +64,6 @@ pub fn main(logname: Option<String>) {
     let image_map = conrod::image::Map::<glium::texture::Texture2d>::new();
 
     let mut events = Vec::new();
-    let mut counter = 0;
 
     'render: loop {
         events.clear();
@@ -117,7 +116,6 @@ pub fn main(logname: Option<String>) {
             let ui = &mut ui.set_widgets();
 
             // Message displayed in middle of screen
-            counter += 1;
 
             let msg = debugger.output();
             widget::Text::new(&msg)
@@ -137,7 +135,7 @@ pub fn main(logname: Option<String>) {
         }
     }
 
-    let ines = emulator.shut_down();
+    let _ines = emulator.shut_down();
 
     match debugger.flush() {
         Ok(_) => {}

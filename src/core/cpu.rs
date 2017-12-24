@@ -3,8 +3,8 @@ use std::{u8, u16, mem};
 use std::num::Wrapping;
 
 pub const POWERUP_S: u8 = 0xFD;
-pub const MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
-pub const CPU_FREQ_NTSC: f64 = 1.789773; //MHz
+pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
+pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
 pub const RESET_VECTOR: u16 = 0xFFFC;
 
 bitflags! {
@@ -49,7 +49,7 @@ pub enum AddressMode {
 }
 
 impl AddressMode {
-    pub fn size(&self) -> usize {
+    pub fn _size(&self) -> usize {
         mem::size_of::<AddressMode>()
     }
 }
@@ -141,8 +141,8 @@ pub struct Instruction {
 }
 
 impl Instruction {
-    pub fn size(&self) -> u8 {
-        self.address.size() as u8
+    pub fn _size(&self) -> u8 {
+        self.address._size() as u8
     }
 }
 
@@ -176,7 +176,7 @@ impl CPU {
         }
     }
 
-    pub fn reset(&mut self) {
+    pub fn _reset(&mut self) {
         self.stack_pointer -= 3;
         self.status_register = self.status_register | StatusFlags::I;
     }
@@ -485,7 +485,7 @@ impl CPU {
                 let counter = 5 + counter_inc(u as u16, self.y);
                 (counter, self.read((u + self.y) as u16)?)
             },
-            x => {
+            _=> {
                 return Err(format!("Unexpected addressing mode {:?}", a))
             }
         };
@@ -560,7 +560,7 @@ impl CPU {
                     let upper = ((self.pc & 0xFF00) >> 8) as u8;
                     self.stack_push(upper)?;
                     let lower = (self.pc & 0x00FF) as u8;
-                    self.stack_push(lower);
+                    self.stack_push(lower)?;
                     let push = self.status_register | StatusFlags::S | StatusFlags::B;
                     self.stack_push(push.bits)
                 }
