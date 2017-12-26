@@ -15,6 +15,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let program = args[0].clone();
     let mut opts = Options::new();
+    opts.optopt("r", "rom", "select a rom", ".nes"); 
     opts.optopt("l", "log", "log messages to a file", "FILE");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
@@ -33,6 +34,12 @@ fn main() {
         None
     };
 
-    nesapod::main(log);
+    let rom = if matches.opt_present("r") {
+        matches.opt_str("r")
+    } else {
+        None
+    };
+
+    nesapod::main(log, rom)
 }
 

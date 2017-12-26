@@ -1,3 +1,4 @@
+use core::ppu::PPU;
 use core::ines::INES;
 use std::{u8, u16};
 use std::num::Wrapping;
@@ -146,6 +147,7 @@ pub struct CPU {
     y: u8,
     status_register: StatusFlags,
     ram: [u8; 2048],
+    ppu: PPU,
     cartridge: INES
 }
 
@@ -161,6 +163,7 @@ impl CPU {
             y: 0,
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
+            ppu: PPU::init(),
             cartridge: ines
         }
     }
@@ -174,17 +177,13 @@ impl CPU {
         self.cartridge
     }
 
-    pub fn read(&self, address: u16) -> CPUResult<u8> {
-        match address as usize {
-            0x0000 ... 0x1FFF => {
-                Ok(self.ram[(address % 2048) as usize])
-            },
-            a @ 0x2000 ... 0x401F => {
-                Err(format!("Access to {:x} not yet implemented!", a))
-            },
-            0x4020 ... 0xFFFF => {
-                self.cartridge.read(address as usize)
-            }
+    pub fn read(&mut self, address: u16) -> CPUResult<u8> {
+        match address {
+            0x0000 ... 0x1FFF => Ok(self.ram[(address % 2048) as usize]),
+            0x2000 ... 0x3FFF => Ok(self.ppu.read(address)),
+            0x4000 ... 0x4017 => Err(format!("APU and IO not yet implemented!")),
+            0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
+            0x4020 ... 0xFFFF => self.cartridge.read(address),
             _ => Err(format!("I dunno lol"))
         }
     }
@@ -195,13 +194,13 @@ impl CPU {
                 self.ram[(address % 2048) as usize] = val;
                 Ok(format!("Wrote {:x} to address {:x}", val, address))
             },
-            0x2000 ... 0x401F => {
-                Err(format!("Not implemented!"))
+            0x2000 ... 0x3FFF => {
+                self.ppu.write(address, val);
+                Ok(format!("Wrote {:x} to ppu {:x}", val, address))
             },
-            0x4020 ... 0xFFFF => {
-                self.cartridge.write(address as usize, val)?;
-                Ok(format!("Wrote {:x} to address {:x}", val, address))
-            },
+            0x4000 ... 0x4017 => Err(format!("APU and IO not yet implemented!")),
+            0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
+            0x4020 ... 0xFFFF => self.cartridge.write(address, val),
             _ => Err(format!("I dunno lol"))
         }
     }
@@ -246,61 +245,69 @@ impl CPU {
         }
     }
 
-    fn absolute_helper(&self) -> CPUResult<u16> {
-        let upper_byte = (self.read(self.pc + 1)? as u16) << 8;
-        let lower_byte = self.read(self.pc + 2)? as u16;
+    fn absolute_helper(&mut self) -> CPUResult<u16> {
+        let addr = self.pc + 1;
+        let upper_byte = (self.read(addr)? as u16) << 8;
+        let lower_byte = self.read(addr + 1)? as u16;
         Ok(upper_byte + lower_byte)
     }
 
-    fn absolute(&self) -> CPUResult<AddressMode> {
+    fn absolute(&mut self) -> CPUResult<AddressMode> {
         Ok(AddressMode::Absolute(self.absolute_helper()?))
     }
 
-    fn absolute_indexed_by_x(&self) -> CPUResult<AddressMode> {
+    fn absolute_indexed_by_x(&mut self) -> CPUResult<AddressMode> {
         Ok(AddressMode::AbsIndexedX(self.absolute_helper()?))
     }
 
-    fn absolute_indexed_by_y(&self) -> CPUResult<AddressMode> {
+    fn absolute_indexed_by_y(&mut self) -> CPUResult<AddressMode> {
         Ok(AddressMode::AbsIndexedY(self.absolute_helper()?))
     }
 
-    fn indirect(&self) -> CPUResult<AddressMode> {
+    fn indirect(&mut self) -> CPUResult<AddressMode> {
         Ok(AddressMode::Indirect(self.absolute_helper()?))
     }
 
-    fn immediate(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::Immediate(self.read(self.pc + 1)?))
+    fn immediate(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::Immediate(self.read(addr)?))
     }
     
-    fn relative(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::Relative(self.read(self.pc + 1)? as i8))
+    fn relative(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::Relative(self.read(addr)? as i8))
     }
 
-    fn indexed_indirect(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::ZPIndexedIndirect(self.read(self.pc + 1)?))
+    fn indexed_indirect(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::ZPIndexedIndirect(self.read(addr)?))
     }
     
-    fn indirect_indexed_by_y(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::ZPIndirectIndexed(self.read(self.pc + 1)?))
+    fn indirect_indexed_by_y(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::ZPIndirectIndexed(self.read(addr)?))
     }
 
-    fn zero_page(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::ZeroPage(self.read(self.pc + 1)?))
+    fn zero_page(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::ZeroPage(self.read(addr)?))
     }
 
-    fn zero_page_indexed_by_x(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::ZPIndexedX(self.read(self.pc + 1)?))
+    fn zero_page_indexed_by_x(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::ZPIndexedX(self.read(addr)?))
     }
 
-    fn zero_page_indexed_by_y(&self) -> CPUResult<AddressMode> {
-        Ok(AddressMode::ZPIndexedY(self.read(self.pc + 1)?))
+    fn zero_page_indexed_by_y(&mut self) -> CPUResult<AddressMode> {
+        let addr = self.pc + 1;
+        Ok(AddressMode::ZPIndexedY(self.read(addr)?))
     }
 
     fn wrap_address(u: u8, v: u8) -> u16 {
         (Wrapping(u) + Wrapping(v)).0 as u16
     }
 
-    fn make_instruction(&self, c: u8) -> CPUResult<Instruction> {
+    fn make_instruction(&mut self, c: u8) -> CPUResult<Instruction> {
         let implied = AddressMode::Implied;
         let lower = c & 0x0F;
         let upper = (c & 0xF0) >> 4;
@@ -465,8 +472,14 @@ impl CPU {
         let (bytes, cycles, val) = match a {
             AddressMode::Immediate(n) => (2, 2, n),
             AddressMode::ZeroPage(u) => (2, 3, self.read(u as u16)?),
-            AddressMode::ZPIndexedX(u) => (2, 4, self.read((u + self.x) as u16)?),
-            AddressMode::ZPIndexedY(u) => (2, 4, self.read((u + self.y) as u16)?),
+            AddressMode::ZPIndexedX(u) => {
+                let res = (u + self.x) as u16;
+                (2, 4, self.read(res)?)
+            },
+            AddressMode::ZPIndexedY(u) => {
+                let res = (u + self.y) as u16;
+                (2, 4, self.read(res)?)
+            },
             AddressMode::Absolute(addr) => (3, 4, self.read(addr)?),
             AddressMode::AbsIndexedX(addr) => {
                 let counter = 4 + counter_inc(addr, self.x);
@@ -484,7 +497,8 @@ impl CPU {
             },
             AddressMode::ZPIndirectIndexed(u) => {
                 let counter = 5 + counter_inc(u as u16, self.y);
-                (2, counter, self.read((u + self.y) as u16)?)
+                let pre_addr = (u + self.y) as u16;
+                (2, counter, self.read(pre_addr)?)
             },
             _=> {
                 return Err(format!("Unexpected addressing mode {:?}", a))
@@ -704,7 +718,8 @@ impl CPU {
     }
 
     pub fn step(&mut self) -> CPUResult<String> {
-        let code = self.read(self.pc)?;
+        let pc = self.pc;
+        let code = self.read(pc)?;
         let instruction = self.make_instruction(code)?;
         self.execute(instruction)
     }

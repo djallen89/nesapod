@@ -5,6 +5,8 @@ use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::str;
 use core::ines::mappers::Mapper;
+use core::ines::mappers::Mapper::*;
+use core::ines::mappers::*;
 use core::cpu::CPUResult;
 
 mod mappers; 
@@ -47,14 +49,15 @@ bitflags! {
 pub enum Mirroring {
     Horizontal,
     Vertical,
+    SingleScreen,
     FourScreenVRAM
 }
 
 pub struct Header {
     prg_rom: u8,
     prg_ram: u8,
-    chr_rom: u8,
-    chr_ram: u8,
+    pub chr_rom: u8,
+    pub chr_ram: u8,
     flags_6: u8,
     flags_7: u8,
     flags_9: u8,
@@ -88,8 +91,7 @@ impl Header {
         }
 
         header.prg_rom = reader.next().unwrap()?;
-        let chr_mem = reader.next().unwrap()?;
-        match chr_mem {
+        match reader.next().unwrap()? {
             0 => header.chr_ram = 1,
             x => header.chr_rom = x
         };
@@ -124,33 +126,30 @@ impl Header {
         self.prg_rom as usize * 16384
     }
 
-    pub fn chr_mem_size(&self) -> usize {
-        (self.chr_rom + self.chr_ram) as usize * 8192
+    pub fn prg_ram_size(&self) -> usize {
+        self.prg_ram as usize * 8192
     }
-
+    
     /// Create representation of ROM with filled rest of file. On completion file should
     /// be exhausted.
-    pub fn fill_mem(&self, filebytes: &mut Bytes<File>) -> Result<Vec<u8>, IOError> {
-        let size = self.prg_rom_size() + (self.chr_rom as usize) * 8192;
+    pub fn fill_mem(&self, size: usize, fbytes: &mut Bytes<File>) -> CPUResult<Vec<u8>> {
+        //let size = self.prg_rom_size() + (self.chr_rom as usize) * 8192;
         let mut data = Vec::with_capacity(size);
         for i in 0..size {
-            let hexpair = match filebytes.next() {
-                Some(x) => x?,
-                None => {
-                    return Err(
-                        IOError::new(ErrorKind::Other,
-                                     format!("Unexpected file end at byte {}", i)))
-                }
-            };
-            data.push(hexpair);
+            match fbytes.next() {
+                Some(x) => match x {
+                    Ok(x) => data.push(x),
+                    Err(f) => return Err(format!("Unexpected file end at byte {}", i))
+                },
+                None => return Err(format!("Unexpected file end at byte {}", i))
+            }
+//            data.push(hexpair);
         }
 
         if data.len() == size {
             Ok(data)
         } else {
-            Err(IOError::new(
-                ErrorKind::Other,
-                format!("Expected {} bytes, found {}", size, data.len())))
+            Err(format!("Expected {} bytes, found {}", size, data.len()))
         }
     }
 
@@ -167,7 +166,7 @@ impl Header {
                self.flags_6 & Flags6::FOURSCREEN.bits) {
             (0, 0) => Mirroring::Horizontal,
             (1, 0) => Mirroring::Vertical,
-            _ => Mirroring::FourScreenVRAM,
+            (_, 1) | _ => Mirroring::FourScreenVRAM,
         }
     }
 
@@ -186,29 +185,55 @@ pub struct INES {
     chr_mem_size: usize,
     _mirroring: Mirroring,
     mapper: Mapper,
-    data: Vec<u8>,
+    prg_rom: Vec<u8>,
+    prg_ram: Vec<u8>,
+    chr_mem: Vec<u8>,
 }
 
 impl INES {
-    pub fn new(path: &str) -> Result<INES, IOError> {
-        let file = File::open(path)?;
-        let metadata = file.metadata()?;
+    pub fn init_ram(cap: usize) -> Vec<u8> {
+        let mut ram = Vec::with_capacity(cap);
+        for _ in 0 .. cap {
+            ram.push(0)
+        }
+        ram
+    }
+    
+    pub fn new(path: &str) -> CPUResult<INES> {
+        let file = match File::open(path) {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{:?}", f))
+        };
+        let metadata = match file.metadata() {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{:?}", f))
+        };
         if metadata.len() < MIN_INES_SIZE {
-            return Err(IOError::new(ErrorKind::Other,
-                                    "File is smaller than minimum possible size!"))
+            return Err(format!("File is smaller than minimum possible size!"))
         }
         let mut filebytes = file.bytes();
-        let header = Header::new(&mut filebytes)?;
-        let data = header.fill_mem(&mut filebytes)?;
+        let header = match Header::new(&mut filebytes) {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{:?}", f))
+        };
+        let prg_rom = header.fill_mem(header.prg_rom_size(), &mut filebytes)?;
+        let chr_mem = match (header.chr_rom, header.chr_ram) {
+            (x, 0) => header.fill_mem((x as usize) * 8192, &mut filebytes)?,
+            (0, x) => INES::init_ram((x as usize) * 8192),
+            (x, y) => panic!("Both chr_rom and chr_rm {} {} should not happen!")
+        };
+        let prg_ram = INES::init_ram(header.prg_ram_size());
 
         Ok(INES {
             _vs_unisystem: header.vs_unisystem(),
             _bus_conflicts: header.bus_conflicts(),
             prg_rom_size: header.prg_rom_size(),
-            chr_mem_size: header.chr_mem_size(),
+            chr_mem_size: chr_mem.len(),
             _mirroring: header.mirroring(),
             mapper: header.mapper(),
-            data: data
+            prg_rom: prg_rom,
+            prg_ram: prg_ram,
+            chr_mem: chr_mem
         })
     }
 
@@ -216,15 +241,57 @@ impl INES {
         self.prg_rom_size + self.chr_mem_size
     }
 
-    pub fn read(&self, idx: usize) -> CPUResult<u8> {
-        let addr = self.mapper.read_address(idx) - self.chr_mem_size;
-        Ok(self.data[addr as usize])
+    pub fn read(&self, idx: u16) -> CPUResult<u8> {
+        match self.mapper {
+            NROM => {
+                match idx {
+                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
+                    0x8000 ... 0xFFFF => {
+                        Ok(self.prg_rom[((idx - 0x8000) as usize) % self.prg_rom_size])
+                    },
+                    _ => panic!("This should not happen with u16")
+                }
+            },
+            SXROM(SxRom::MMC1) => {
+                match idx {
+                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
+                    0x8000 ... 0xFFFF => {
+                        Ok(self.prg_rom[((idx - 0x8000) as usize) % self.prg_rom_size])
+                    },
+                    _ => panic!("This should not happen with u16")
+                }
+            },
+            x => Err(format!("{:?} not covered yet", x))
+        }
     }
     
-    pub fn write(&mut self, idx: usize, val: u8) -> CPUResult<()> {
-        let addr = self.mapper.write_address(idx)?;
-        self.data[addr as usize] = val;
-        Ok(())
+    pub fn write(&mut self, idx: u16, val: u8) -> CPUResult<String> {
+        match self.mapper {
+            NROM => {
+                match idx {
+                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x6000 ... 0x7FFF => {
+                        self.prg_ram[(idx - 0x6000) as usize] = val;
+                        Ok(format!("Wrote {:x} to address {:x}", val, idx))
+                    },
+                    0x7FFF ... 0xFFFF => Err(format!("Can't write to {:x}!", idx)),
+                    _ => panic!("This should not happen with u16")
+                }
+            },
+            SXROM(SxRom::MMC1) => {
+                Err(format!("adfasdf"))
+            },
+            x => Err(format!("{:?} not covered yet", x))
+        }
+    }
+
+    pub fn ppu_read(&self) {
+    }
+    
+    pub fn ppu_write(&self) {
+        
     }
     
     pub fn mapper(&self) -> Mapper {

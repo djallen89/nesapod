@@ -7,12 +7,16 @@ use core;
 use core::ines::INES;
 use core::cpu::CPU;
 
-pub fn main(logname: Option<String>) {
+pub fn main(logname: Option<String>, rom: Option<String>) {
     const WIDTH: u32 = 800;
     const HEIGHT: u32 = 600;
 
     let mut debugger = core::Debug::new(20, logname);
-    let ines = match INES::new("assets/instr_test-v5/rom_singles/01-basics.nes") {
+    let romname = match rom {
+        Some(r) => r,
+        None => format!("assets/instr_test-v5/rom_singles/01-basics.nes")
+    };
+    let ines = match INES::new(&romname) {
         Ok(r) => {
             debugger.input(&format!("Successfully loaded ROM of size {}", r.size()));
             debugger.input(&format!("Mapper Id: {:?}", r.mapper()));
@@ -67,11 +71,18 @@ pub fn main(logname: Option<String>) {
 
     'render: loop {
         events.clear();
-        let msg = match emulator.step() {
-            Ok(x) => format!("{:x}: {} ; ({} cycles)", emulator.get_pc(), x, emulator.get_counter()),
-            Err(f) => format!("{:x}: {}", emulator.get_pc(), f)
-        };
-        debugger.input(&msg);
+        
+        match emulator.step() {
+            Ok(x) => {
+                let msg = format!("{:x}: {} ; ({} cycles)", emulator.get_pc(), x,
+                                  emulator.get_counter());
+                debugger.input(&msg);
+            },
+            Err(f) => {
+                debugger.input(&format!("{:x}: {}", emulator.get_pc(), f));
+            }
+        }
+
         
         // Get all the new events since the last frame.
         events_loop.poll_events(|event| { events.push(event); });
