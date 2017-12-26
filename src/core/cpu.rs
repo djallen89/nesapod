@@ -688,6 +688,27 @@ impl CPU {
                 Ok(msg)
             },
             /* CMP, CPX, CPY, */
+            (c @ Code::CMP, a) | (c @ Code::CPX, a) | (c @ Code::CPY, a) => {
+                let (bytes, cycles, val) = self.decode_address_read(a)?;
+                let lhs = if c == Code::CMP {
+                    self.accumulator
+                } else if c == Code::CPX {
+                    self.x
+                } else {
+                    self.y
+                };
+                if lhs < val {
+                    self.status_register |= StatusFlags::N;
+                } else {
+                    if lhs == val {
+                        self.status_register |= StatusFlags::Z
+                    }
+                    self.status_register |= StatusFlags::C
+                }
+                self.counter += cycles;
+                self.pc += bytes;
+                Ok(format!("Compared register ({}) to {}", lhs, val))
+            },
             
             /* BIT, */
             
