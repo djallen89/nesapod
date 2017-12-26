@@ -138,7 +138,7 @@ impl Header {
             match fbytes.next() {
                 Some(x) => match x {
                     Ok(x) => data.push(x),
-                    Err(f) => return Err(format!("Unexpected file end at byte {}", i))
+                    Err(f) => return Err(format!("{}: Unexpected file end at byte {}", f, i))
                 },
                 None => return Err(format!("Unexpected file end at byte {}", i))
             }

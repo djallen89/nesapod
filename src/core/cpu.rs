@@ -222,6 +222,21 @@ impl CPU {
         }
     }
 
+    pub fn set_zn(&mut self, val: u8) {
+        print!("{:?} -> ", self.status_register);
+        if val == 0 {
+            self.status_register |= StatusFlags::Z;
+            self.status_register &= !StatusFlags::N;
+        } else if val > 127 {
+            self.status_register |= StatusFlags::N;
+            self.status_register &= !StatusFlags::Z;
+        } else {
+            self.status_register &= !StatusFlags::N;
+            self.status_register &= !StatusFlags::Z;
+        }
+        println!("{:?}", self.status_register);
+    }
+
     fn stack_decrement(&mut self) -> CPUResult<()> {
         if self.stack_pointer == 0 {
             Err(format!("Stack overflow!"))
@@ -549,6 +564,7 @@ impl CPU {
 
     fn load(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {        
         let (bytes, cycles, val) = self.decode_address_read(a)?;
+        self.set_zn(val);
         self.pc += bytes;
         self.counter += cycles;
         match m {
@@ -558,10 +574,10 @@ impl CPU {
             x => panic!(format!("Expected Load; Found {:?}", x))
         }
 
-        Ok(format!("Loaded {} into {:?}", val, m))
+        Ok(format!("Loaded {:b} into {:?}", val, m))
     }
 
-    pub fn store(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {
+    fn store(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {
         let val = match m {
             Code::STA => self.accumulator,
             Code::STX => self.x,
@@ -578,19 +594,14 @@ impl CPU {
     }
 
     #[inline(always)]
-    pub fn wrapped_inc(&mut self, u: u8) -> CPUResult<u8> {
+    fn wrapped_inc(&mut self, u: u8) -> CPUResult<u8> {
         let val = (Wrapping(u) + Wrapping(1)).0;
-        if val == 0 {
-            self.status_register | StatusFlags::Z;
-        } else if (val & 0b1000_0000) == 1 {
-            self.status_register | StatusFlags::N;
-        }
-        println!("doot {}", val);
+        self.set_zn(val);
         Ok(val)
     }
 
     #[inline(always)]
-    pub fn wrapped_dec(&mut self, u: u8) -> CPUResult<u8> {
+    fn wrapped_dec(&mut self, u: u8) -> CPUResult<u8> {
         let val = (Wrapping(u) - Wrapping(1)).0;
         if val == 0 {
             self.status_register | StatusFlags::Z;
@@ -600,7 +611,7 @@ impl CPU {
         Ok(val)
     }
 
-    pub fn inc(&mut self, a: AddressMode) -> CPUResult<String> {
+    fn inc(&mut self, a: AddressMode) -> CPUResult<String> {
         let (bytes, cycles, address) = self.decode_address_write(a)?;
         self.pc += bytes;
         self.counter += cycles + COUNTER_CONST;
@@ -609,7 +620,7 @@ impl CPU {
         self.write(address, val)
     }
 
-    pub fn inc_reg(&mut self, m: Code) -> CPUResult<String> {
+    fn inc_reg(&mut self, m: Code) -> CPUResult<String> {
         self.pc += 1;
         self.counter += 2;
         match m {
@@ -629,7 +640,7 @@ impl CPU {
         }
     }
 
-    pub fn dec(&mut self, a: AddressMode) -> CPUResult<String> {
+    fn dec(&mut self, a: AddressMode) -> CPUResult<String> {
         let (bytes, cycles, address) = self.decode_address_write(a)?;
         self.pc += bytes;
         self.counter += cycles + COUNTER_CONST;
@@ -638,7 +649,7 @@ impl CPU {
         self.write(address, val)
     }
 
-    pub fn dec_reg(&mut self, m: Code) -> CPUResult<String> {
+    fn dec_reg(&mut self, m: Code) -> CPUResult<String> {
         self.pc += 1;
         self.counter += 2;
         match m {
@@ -658,13 +669,12 @@ impl CPU {
     }
 
     fn lsr_acc(&mut self) -> CPUResult<String> {
-        self.status_register.bits |= self.accumulator & 0b0000_0001;
-        self.accumulator >>= 1;
-        if self.accumulator == 0 {
-            self.status_register |= StatusFlags::Z;
-        } else {
-            self.status_register &= !StatusFlags::Z;
-        }
+        let carry = self.accumulator & 0b0000_0001;
+        let mut val = self.accumulator;
+        val >>= 1;
+        self.set_zn(val);
+        self.status_register.bits |= carry;
+        self.accumulator = val;
         self.pc += 1;
         self.counter += 2;
         Ok(format!("Shifted Accumulator right for result {:x}", self.accumulator))
@@ -673,13 +683,10 @@ impl CPU {
     fn lsr_mem(&mut self, a: AddressMode) -> CPUResult<String> {
         let (bytes, cycles, addr) = self.decode_address_write(a)?;
         let mut val = self.read(addr)?;
-        self.status_register.bits |= val & 0b0000_0001;
+        let carry = val & 0b0000_0001;
         val >>= 1;
-        if val == 0 {
-            self.status_register |= StatusFlags::Z;
-        } else {
-            self.status_register &= !StatusFlags::Z;
-        }
+        self.set_zn(val);
+        self.status_register.bits |= carry;
         self.write(addr, val)?;
         self.pc += bytes;
         self.counter += cycles + COUNTER_CONST;
@@ -727,13 +734,8 @@ impl CPU {
                         format!("Logical or {:x}", val)
                     }
                 };
-                if self.accumulator == 0 {
-                    self.status_register |= StatusFlags::Z;
-                    self.status_register &= !StatusFlags::N;
-                } else if self.accumulator & 0b1000_0000 == 0b1000_0000 {
-                    self.status_register |= StatusFlags::N;
-                    self.status_register &= !StatusFlags::Z;
-                }
+                let res = self.accumulator;
+                self.set_zn(res);
                 Ok(msg)
             },
             /* CMP, CPX, CPY, */
@@ -750,12 +752,11 @@ impl CPU {
                     self.status_register |= StatusFlags::N;
                     self.status_register &= !StatusFlags::Z;
                     self.status_register &= !StatusFlags::C;
+                } else if lhs == val {
+                    self.status_register |= StatusFlags::Z;
+                    self.status_register |= StatusFlags::C;
+                    self.status_register &= !StatusFlags::N;
                 } else {
-                    if lhs == val {
-                        self.status_register |= StatusFlags::Z;
-                        self.status_register |= StatusFlags::C;
-                        self.status_register &= !StatusFlags::N;
-                    }
                     self.status_register &= !StatusFlags::N;
                     self.status_register &= !StatusFlags::Z;
                     self.status_register |= StatusFlags::C;
@@ -771,14 +772,14 @@ impl CPU {
             (c @ Code::BNE, AddressMode::Relative(d)) |
             (c @ Code::BEQ, AddressMode::Relative(d)) |
             (c @ Code::BPL, AddressMode::Relative(d)) => {
+                print!("{:?}, Flags: {:?}, ", c, self.status_register);
+                print!("{:?}, ", (self.status_register & StatusFlags::Z) == StatusFlags::Z);
+                println!("{:?}", self.status_register & StatusFlags::N);
                 let cond = if c == Code::BEQ {
-                    println!("BEQ {}", (self.status_register & StatusFlags::Z) == StatusFlags::Z);
                     (self.status_register & StatusFlags::Z) == StatusFlags::Z
                 } else if c == Code::BNE {
-                    println!("BNE {}",(self.status_register & StatusFlags::Z) != StatusFlags::Z);
-                    (self.status_register & StatusFlags::Z) == StatusFlags::Z
+                    (self.status_register & StatusFlags::Z) != StatusFlags::Z
                 } else {
-                    println!("BPL {}", (self.status_register & StatusFlags::N) != StatusFlags::N);
                     (self.status_register & StatusFlags::N) != StatusFlags::N
                 };
                 if cond {
@@ -824,14 +825,9 @@ impl CPU {
             (Code::PLA, AddressMode::Implied) => {
                 self.counter += 4;
                 self.pc += 1;
-                self.accumulator = self.stack_pop()?;
-                if self.accumulator == 0 {
-                    self.status_register |= StatusFlags::Z;
-                    self.status_register &= !StatusFlags::N;
-                } else if (self.accumulator & 0b1000_0000) == 1 {
-                    self.status_register |= StatusFlags::N;
-                    self.status_register &= !StatusFlags::Z;
-                }
+                let acc = self.stack_pop()?;
+                self.set_zn(acc);
+                self.accumulator = acc;
                 Ok(format!("Pulled accumulator from stack!"))
             }
             /* PLP, */
@@ -864,6 +860,7 @@ impl CPU {
             },
             (Code::RTI, AddressMode::Implied) => {
                 let flags = self.stack_pop()?;
+                println!("{}", flags);
                 self.status_register.bits = flags;
                 let addr = self.stack_pop_double()?;
                 self.pc = addr;
