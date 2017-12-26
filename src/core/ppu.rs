@@ -1,5 +1,3 @@
-use core::cpu::CPUResult;
-
 bitflags! {
     pub struct PPUCTRL: u8 {
         const INIT = 0;
@@ -88,7 +86,7 @@ impl PPU {
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
-        match (address % 8) {
+        match address % 8 {
             0 => self.ppu_gen_latch,
             1 => self.ppu_gen_latch,
             2 => {

@@ -8,6 +8,7 @@ pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
 pub const RESET_VECTOR: u16 = 0xFFFC;
 pub const STACK_REGION: u16 = 0x01A0;
+pub const COUNTER_CONST: u16 = 2;
 
 bitflags! {
     struct StatusFlags: u8 {
@@ -22,7 +23,17 @@ bitflags! {
     }
 }
 
-pub fn counter_inc(x: u16, y: u8) -> u8 {
+pub fn split(u: u16) -> (u8, u8) {
+    let lower = (u & 0x0F) as u8;
+    let upper = (u >> 8) as u8;
+    (lower, upper)
+}
+
+pub fn combine(lower: u8, upper: u8) -> u16 {
+    ((upper as u16) << 8) + (lower as u16)
+}
+
+pub fn counter_inc(x: u16, y: u8) -> u16 {
     //x + y > c  | x + y < c
     //c < x + y  | c > x + y
     //c - x < y  | c - x > y
@@ -50,7 +61,7 @@ pub enum AddressMode {
     Indirect(u16)
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Code {
     LDA, LDX, LDY, 
     STA, STX, STY, 
@@ -173,6 +184,12 @@ impl CPU {
         self.status_register = self.status_register | StatusFlags::I;
     }
 
+    pub fn read_double(&mut self, addr: u16) -> CPUResult<u16> {
+        let lower = self.read(addr)?;
+        let upper = self.read(addr + 1)?;
+        Ok(combine(lower, upper))
+    }
+
     pub fn shut_down(self) -> INES {
         self.cartridge
     }
@@ -234,6 +251,12 @@ impl CPU {
         }
     }
 
+    fn stack_push_double(&mut self, val: u16) -> CPUResult<String> {
+        let (lower, upper) = split(val);
+        self.stack_push(upper)?;
+        self.stack_push(lower)
+    }
+
     fn stack_pop(&mut self) -> CPUResult<u8> {
         let addr = (self.stack_pointer as u16) + STACK_REGION;
         match self.read(addr) {
@@ -245,11 +268,16 @@ impl CPU {
         }
     }
 
+    fn stack_pop_double(&mut self) -> CPUResult<u16> {
+        let lower = self.stack_pop()?;
+        let upper = self.stack_pop()?;
+        let val = combine(lower, upper);
+        Ok(val)
+    }
+
     fn absolute_helper(&mut self) -> CPUResult<u16> {
         let addr = self.pc + 1;
-        let upper_byte = (self.read(addr)? as u16) << 8;
-        let lower_byte = self.read(addr + 1)? as u16;
-        Ok(upper_byte + lower_byte)
+        self.read_double(addr)
     }
 
     fn absolute(&mut self) -> CPUResult<AddressMode> {
@@ -305,6 +333,57 @@ impl CPU {
 
     fn wrap_address(u: u8, v: u8) -> u16 {
         (Wrapping(u) + Wrapping(v)).0 as u16
+    }
+
+    pub fn decode_address_read(&mut self, a: AddressMode) -> CPUResult<(u16, u16, u8)> {
+        match a {
+            AddressMode::Immediate(n) => Ok((2, 2, n)),
+            AddressMode::ZeroPage(u) => Ok((2, 3, self.read(u as u16)?)),
+            AddressMode::ZPIndexedX(u) => {
+                let res = (u + self.x) as u16;
+                Ok((2, 4, self.read(res)?))
+            },
+            AddressMode::ZPIndexedY(u) => {
+                let res = (u + self.y) as u16;
+                Ok((2, 4, self.read(res)?))
+            },
+            AddressMode::Absolute(addr) => Ok((3, 4, self.read(addr)?)),
+            AddressMode::AbsIndexedX(addr) => {
+                let counter = 4 + counter_inc(addr, self.x);
+                let addr = addr + (self.x as u16);
+                Ok((3, counter, self.read(addr)?))
+            },
+            AddressMode::AbsIndexedY(addr) => {
+                let counter = 4 + counter_inc(addr, self.y);
+                let addr = addr + (self.x as u16);
+                Ok((3, counter, self.read(addr)?))
+            },
+            AddressMode::ZPIndexedIndirect(u) => {
+                let addr = CPU::wrap_address(u, self.x);
+                Ok((2, 6, self.read(addr)?))
+            },
+            AddressMode::ZPIndirectIndexed(u) => {
+                let counter = 5 + counter_inc(u as u16, self.y);
+                let pre_addr = (u + self.y) as u16;
+                Ok((2, counter, self.read(pre_addr)?))
+            },
+            _=> Err(format!("Unexpected addressing mode {:?}", a))
+        }
+    }
+
+    #[inline(always)]
+    pub fn decode_address_write(&self, a: AddressMode) -> CPUResult<(u16, u16, u16)> {
+        match a {
+            AddressMode::ZeroPage(u) => Ok((2, 3, u as u16)),
+            AddressMode::ZPIndexedX(u) => Ok((2, 4, (u + self.x) as u16)),
+            AddressMode::ZPIndexedY(u) => Ok((2, 4, (u + self.y) as u16)),
+            AddressMode::Absolute(addr) => Ok((3, 4, addr)),
+            AddressMode::AbsIndexedX(addr) => Ok((3, 5, addr + (self.x as u16))),
+            AddressMode::AbsIndexedY(addr) => Ok((3, 5, addr + (self.y as u16))),
+            AddressMode::ZPIndexedIndirect(u) => Ok((2, 6, CPU::wrap_address(u, self.x))),
+            AddressMode::ZPIndirectIndexed(u) => Ok((2, 6, (u + self.y) as u16)),
+            _=> Err(format!("Unexpected addressing mode {:?}", a))
+        }
     }
 
     fn make_instruction(&mut self, c: u8) -> CPUResult<Instruction> {
@@ -469,43 +548,9 @@ impl CPU {
     }
 
     fn load(&mut self, m: Code, a: AddressMode) -> CPUResult<String> {        
-        let (bytes, cycles, val) = match a {
-            AddressMode::Immediate(n) => (2, 2, n),
-            AddressMode::ZeroPage(u) => (2, 3, self.read(u as u16)?),
-            AddressMode::ZPIndexedX(u) => {
-                let res = (u + self.x) as u16;
-                (2, 4, self.read(res)?)
-            },
-            AddressMode::ZPIndexedY(u) => {
-                let res = (u + self.y) as u16;
-                (2, 4, self.read(res)?)
-            },
-            AddressMode::Absolute(addr) => (3, 4, self.read(addr)?),
-            AddressMode::AbsIndexedX(addr) => {
-                let counter = 4 + counter_inc(addr, self.x);
-                let addr = addr + (self.x as u16);
-                (3, counter, self.read(addr)?)
-            },
-            AddressMode::AbsIndexedY(addr) => {
-                let counter = counter_inc(addr, self.y);
-                let addr = addr + (self.x as u16);
-                (3, counter, self.read(addr)?)
-            },
-            AddressMode::ZPIndexedIndirect(u) => {
-                let addr = CPU::wrap_address(u, self.x);
-                (2, 6, self.read(addr)?)
-            },
-            AddressMode::ZPIndirectIndexed(u) => {
-                let counter = 5 + counter_inc(u as u16, self.y);
-                let pre_addr = (u + self.y) as u16;
-                (2, counter, self.read(pre_addr)?)
-            },
-            _=> {
-                return Err(format!("Unexpected addressing mode {:?}", a))
-            }
-        };
+        let (bytes, cycles, val) = self.decode_address_read(a)?;
         self.pc += bytes;
-        self.counter += cycles as u16;
+        self.counter += cycles;
         match m {
             Code::LDA => self.accumulator = val,
             Code::LDX => self.x = val,
@@ -524,20 +569,10 @@ impl CPU {
             x => panic!(format!("Expected Load; Found {:?}", x))
         };
         
-        let (bytes, cycles, addr) = match a {
-            AddressMode::ZeroPage(u) => (2, 3, u as u16),
-            AddressMode::ZPIndexedX(u) => (2, 4, (u + self.x) as u16),
-            AddressMode::ZPIndexedY(u) => (2, 4, (u + self.y) as u16),
-            AddressMode::Absolute(addr) => (3, 4, addr),
-            AddressMode::AbsIndexedX(addr) => (3, 5, addr + (self.x as u16)),
-            AddressMode::AbsIndexedY(addr) => (3, 5, addr + (self.y as u16)),
-            AddressMode::ZPIndexedIndirect(u) => (2, 6, CPU::wrap_address(u, self.x)),
-            AddressMode::ZPIndirectIndexed(u) => (2, 6, (u + self.y) as u16),
-            _=> return Err(format!("Unexpected addressing mode {:?}", a))
-        };
+        let (bytes, cycles, addr) = self.decode_address_write(a)?;
         self.write(addr, val)?;
         self.pc += bytes;
-        self.counter += cycles as u16;
+        self.counter += cycles;
 
         Ok(format!("Stored {:?} into {}", m, val))
     }
@@ -554,15 +589,9 @@ impl CPU {
     }
 
     pub fn inc(&mut self, a: AddressMode) -> CPUResult<String> {
-        let (bytes, cycles, address) = match a {
-            AddressMode::ZeroPage(u) => (2, 5, u as u16),
-            AddressMode::ZPIndexedX(u) => (2, 6, (u + self.x) as u16),
-            AddressMode::Absolute(addr) => (3, 6, addr),
-            AddressMode::AbsIndexedX(addr) => (3, 7, addr + (self.x as u16)),
-            x => return Err(format!("Impossible addressing mode {:?}", x))
-        };
+        let (bytes, cycles, address) = self.decode_address_write(a)?;
         self.pc += bytes;
-        self.counter += cycles;
+        self.counter += cycles + COUNTER_CONST;
         let u = self.read(address)?;
         let val = self.wrapped_inc(u)?;
         self.write(address, val)
@@ -599,13 +628,7 @@ impl CPU {
     }
 
     fn lsr_mem(&mut self, a: AddressMode) -> CPUResult<String> {
-        let (bytes, cycles, addr) = match a {
-            AddressMode::ZeroPage(u) => (2, 5, u as u16),
-            AddressMode::ZPIndexedX(u) => (2, 6, (u + self.x) as u16),
-            AddressMode::Absolute(addr) => (3, 6, addr),
-            AddressMode::AbsIndexedX(addr) => (3, 7, addr + (self.x as u16)),
-            _ => return Err(format!("Unexpected addressing mode {:?}", a))
-        };
+        let (bytes, cycles, addr) = self.decode_address_write(a)?;
         let mut val = self.read(addr)?;
         self.status_register.bits |= val & 0b0000_0001;
         val >>= 1;
@@ -614,7 +637,7 @@ impl CPU {
         }
         self.write(addr, val)?;
         self.pc += bytes;
-        self.counter += cycles;
+        self.counter += cycles + COUNTER_CONST;
         Ok(format!("Shifted {:x} right for result {:x}", addr, val))
     }
 
@@ -639,32 +662,72 @@ impl CPU {
             /* ROL, ROR */
             
             /* AND, ORA, EOR, */
-            
+            (c @ Code::AND, a) | (c @ Code::ORA, a) | (c @ Code::EOR, a) => {
+                let (bytes, cycles, val) = self.decode_address_read(a)?;
+                self.pc += bytes;
+                self.counter += cycles;
+                let msg = match c {
+                    Code::AND => {
+                        self.accumulator &= val;
+                        format!("Logical and {:x}", val)
+                    },
+                    Code::EOR => {
+                        self.accumulator ^= val;
+                        format!("Exclusive or {:x}", val)
+                    },
+                    _ => {
+                        self.accumulator |= val;
+                        format!("Logical or {:x}", val)
+                    }
+                };
+                if self.accumulator == 0 {
+                    self.status_register |= StatusFlags::Z
+                } else if self.accumulator & 0b1000_0000 == 0b1000_0000 {
+                    self.status_register |= StatusFlags::N
+                }
+                Ok(msg)
+            },
             /* CMP, CPX, CPY, */
             
             /* BIT, */
             
-            /* BCC, BCS, BEQ, BMI, */
-            
-            /* BNE, BPL, BVC, BVS, */
-            (Code::BNE, AddressMode::Relative(d)) => {
-                if (self.status_register & StatusFlags::Z) == StatusFlags::Z {
-                    self.counter += 2;
-                    self.pc += 2;
-                    Ok(format!("No branch."))
+            /* BCC, BCS, BMI, */
+            /* BNE, BEQ */ 
+            (c @ Code::BNE, AddressMode::Relative(d)) |
+            (c @ Code::BEQ, AddressMode::Relative(d)) => {
+                let zero = (self.status_register & StatusFlags::Z) == StatusFlags::Z;
+                /*|   |ZERO  |ONE   | *
+                 *|BEQ|BRANCH|DO NOT| *
+                 *|BNE|DO NOT|BRANCH| */
+                let cond = if c == Code::BEQ {
+                    zero
                 } else {
+                    !zero
+                };
+                if cond {
                     self.counter += 3 + 2 * (counter_inc(self.pc, d as u8) as u16);
                     if d < 0 {
                         self.pc -= (d as u8) as u16;
-                        Ok(format!("Subtracted {} from pc", -d))
                     } else {
                         self.pc += (d as u8) as u16;
-                        Ok(format!("Added {} to pc", d))
                     }
+                    Ok(format!("Branched by {}", d))
+                } else {
+                    self.counter += 2;
+                    self.pc += 2;
+                    Ok(format!("No branch."))
                 }
-            }
-            /* TAX, TXA, TAY, TYA, TSX, TXS, */
+            },
+            /* BPL, BVC, BVS, */
             
+            /* TAX, TXA, TAY, TYA, TSX, TXS, */
+            (Code::TXS, AddressMode::Implied) => {
+                let val = self.x;
+                self.stack_push(val)?;
+                self.pc += 1;
+                self.counter += 2;
+                Ok(format!("Transferred x to stack"))
+            }
             /* PHA */ 
             (Code::PHA, AddressMode::Implied) => {
                 self.counter += 3;
@@ -679,7 +742,18 @@ impl CPU {
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)
             },
-            /* PLA */ 
+            /* PLA */
+            (Code::PLA, AddressMode::Implied) => {
+                self.counter += 4;
+                self.pc += 1;
+                self.accumulator = self.stack_pop()?;
+                if self.accumulator == 0 {
+                    self.status_register |= StatusFlags::Z
+                } else if (self.accumulator & 0b1000_0000) == 1 {
+                    self.status_register |= StatusFlags::N
+                }
+                Ok(format!("Pulled accumulator from stack!"))
+            }
             /* PLP, */
             /* JMP */
             (Code::JMP, AddressMode::Absolute(idx)) => {
@@ -689,23 +763,30 @@ impl CPU {
             },
             (Code::JMP, AddressMode::Indirect(idx)) => {
                 self.counter += 5;
-                let lower = self.read(idx)? as u16;
-                let upper = (self.read(idx + 1)?  as u16) << 8;
-                let addr = upper + lower;
+                let addr = self.read_double(idx)?;
                 self.pc = addr;
                 Ok(format!("Set pc to {:x}", addr))
             },
             /*JSR */
-
+            (Code::JSR, AddressMode::Absolute(idx)) => {
+                self.counter += 6;
+                let ret_addr = self.pc + 2;
+                self.stack_push_double(ret_addr)?;
+                self.pc = idx;
+                Ok(format!("Pushed {:x} onto stack and set pc to {:x}.", ret_addr, idx))
+            }
             /*RTS, RTI, */
+            (Code::RTS, AddressMode::Implied) => {
+                let addr = self.stack_pop_double()?;
+                self.pc = addr + 1;
+                self.counter += 6;
+                Ok(format!("Returned pc to {:x}", self.pc)) 
+            },
             (Code::RTI, AddressMode::Implied) => {
                 let flags = self.stack_pop()?;
                 self.status_register.bits = flags;
-                /* let lower = self.stack_pop()? as u16;
-                let upper = (self.stack_pop()? as u16) << 8; */
-                let upper = (self.stack_pop()? as u16) << 8;
-                let lower = self.stack_pop()? as u16;
-                self.pc = upper + lower;
+                let addr = self.stack_pop_double()?;
+                self.pc = addr;
                 self.counter += 6;
                 Ok(format!("Set pc to {:x} from interrupt", self.pc))
             }
@@ -723,14 +804,11 @@ impl CPU {
                     Err(format!("Stack overflowed!"))
                 } else {
                     self.counter += 7;
-                    let upper = ((self.pc & 0xFF00) >> 8) as u8;
-                    self.stack_push(upper)?;
-                    let lower = (self.pc & 0x00FF) as u8;
-                    self.stack_push(lower)?;
+                    let addr = self.pc;
+                    self.stack_push_double(addr)?;
                     
-                    let irq_lower = self.read(0xFFFE)? as u16;
-                    let irq_upper = (self.read(0xFFFF)? as u16) << 8;
-                    self.pc = irq_upper + irq_lower;
+                    let irq = self.read_double(0xFFFE)?;
+                    self.pc = irq;
                     
                     let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                     self.stack_push(flags.bits)

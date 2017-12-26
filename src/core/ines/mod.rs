@@ -218,7 +218,7 @@ impl INES {
         let chr_mem = match (header.chr_rom, header.chr_ram) {
             (x, 0) => header.fill_mem((x as usize) * 8192, &mut filebytes)?,
             (0, x) => INES::init_ram((x as usize) * 8192),
-            (x, y) => panic!("Both chr_rom and chr_rm {} {} should not happen!")
+            (x, y) => panic!(format!("Both chr_rom and chr_rm {} {} should not happen!", x, y))
         };
         let prg_ram = INES::init_ram(header.prg_ram_size());
 
