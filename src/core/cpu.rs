@@ -588,6 +588,17 @@ impl CPU {
         Ok(val)
     }
 
+    #[inline(always)]
+    pub fn wrapped_dec(&mut self, u: u8) -> CPUResult<u8> {
+        let val = (Wrapping(u) - Wrapping(1)).0;
+        if val == 0 {
+            self.status_register | StatusFlags::Z;
+        } else if (val & 0b1000_0000) == 1 {
+            self.status_register | StatusFlags::N;
+        }
+        Ok(val)
+    }
+
     pub fn inc(&mut self, a: AddressMode) -> CPUResult<String> {
         let (bytes, cycles, address) = self.decode_address_write(a)?;
         self.pc += bytes;
@@ -612,6 +623,34 @@ impl CPU {
                 let val = self.wrapped_inc(u)?;
                 self.y = val;
                 Ok(format!("Incremented Y by 1 for a result of {}", self.y))
+            }
+        }
+    }
+
+    pub fn dec(&mut self, a: AddressMode) -> CPUResult<String> {
+        let (bytes, cycles, address) = self.decode_address_write(a)?;
+        self.pc += bytes;
+        self.counter += cycles + COUNTER_CONST;
+        let u = self.read(address)?;
+        let val = self.wrapped_inc(u)?;
+        self.write(address, val)
+    }
+
+    pub fn dec_reg(&mut self, m: Code) -> CPUResult<String> {
+        self.pc += 1;
+        self.counter += 2;
+        match m {
+            Code::DEX => {
+                let u = self.x;
+                let val = self.wrapped_dec(u)?;
+                self.x = val;
+                Ok(format!("Decremented X by 1 for a result of {}", self.x))
+            },
+            _ => {
+                let u = self.y;
+                let val = self.wrapped_dec(u)?;
+                self.y = val;
+                Ok(format!("Decremented Y by 1 for a result of {}", self.y))
             }
         }
     }
@@ -642,6 +681,7 @@ impl CPU {
     }
 
     pub fn execute(&mut self, instruction: Instruction) -> CPUResult<String> {
+        println!("{:?}", instruction.mnemonic);
         match (instruction.mnemonic, instruction.address) {
             /* LDA, LDX, LDY, */
             (m @ Code::LDA, a) | (m @ Code::LDX, a) | (m @ Code::LDY, a) => self.load(m, a),
@@ -655,7 +695,9 @@ impl CPU {
             (m @ Code::INX, AddressMode::Implied) |
             (m @ Code::INY, AddressMode::Implied) => self.inc_reg(m),
             /* DEC, DEX, DEY, */
-            
+            (Code::DEC, a) => self.dec(a),
+            (m @ Code::DEX, AddressMode::Implied) |
+            (m @ Code::DEY, AddressMode::Implied) => self.dec_reg(m),
             /* ASL, LSR */
             (Code::LSR, AddressMode::Accumulator) => self.lsr_acc(),
             (Code::LSR, a) => self.lsr_mem(a),
@@ -709,7 +751,6 @@ impl CPU {
                 self.pc += bytes;
                 Ok(format!("Compared register ({}) to {}", lhs, val))
             },
-            
             /* BIT, */
             
             /* BCC, BCS, BMI, */
