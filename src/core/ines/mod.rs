@@ -133,7 +133,6 @@ impl Header {
     /// Create representation of ROM with filled rest of file. On completion file should
     /// be exhausted.
     pub fn fill_mem(&self, size: usize, fbytes: &mut Bytes<File>) -> CPUResult<Vec<u8>> {
-        //let size = self.prg_rom_size() + (self.chr_rom as usize) * 8192;
         let mut data = Vec::with_capacity(size);
         for i in 0..size {
             match fbytes.next() {
@@ -143,7 +142,6 @@ impl Header {
                 },
                 None => return Err(format!("Unexpected file end at byte {}", i))
             }
-//            data.push(hexpair);
         }
 
         if data.len() == size {

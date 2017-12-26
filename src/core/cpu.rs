@@ -1,6 +1,6 @@
 use core::ppu::PPU;
 use core::ines::INES;
-use std::{u8, u16};
+use std::{i8, u8, u16};
 use std::num::Wrapping;
 
 pub const POWERUP_S: u8 = 0xFD;
@@ -644,12 +644,43 @@ impl CPU {
             
             /* BIT, */
             
-            /* BCC, BCS, BEQ, BMI, BNE, BPL, BVC, BVS, */
+            /* BCC, BCS, BEQ, BMI, */
             
+            /* BNE, BPL, BVC, BVS, */
+            (Code::BNE, AddressMode::Relative(d)) => {
+                if (self.status_register & StatusFlags::Z) == StatusFlags::Z {
+                    self.counter += 2;
+                    self.pc += 2;
+                    Ok(format!("No branch."))
+                } else {
+                    self.counter += 3 + 2 * (counter_inc(self.pc, d as u8) as u16);
+                    if d < 0 {
+                        self.pc -= (d as u8) as u16;
+                        Ok(format!("Subtracted {} from pc", -d))
+                    } else {
+                        self.pc += (d as u8) as u16;
+                        Ok(format!("Added {} to pc", d))
+                    }
+                }
+            }
             /* TAX, TXA, TAY, TYA, TSX, TXS, */
             
-            /* PHA, PLA, PHP, PLP, */
-            
+            /* PHA */ 
+            (Code::PHA, AddressMode::Implied) => {
+                self.counter += 3;
+                self.pc += 1;
+                let val = self.accumulator;
+                self.stack_push(val)
+            },
+            /* PHP */
+            (Code::PHP, AddressMode::Implied) => {
+                self.counter += 2;
+                self.pc += 1;
+                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                self.stack_push(flags.bits)
+            },
+            /* PLA */ 
+            /* PLP, */
             /* JMP */
             (Code::JMP, AddressMode::Absolute(idx)) => {
                 self.counter += 3;
