@@ -1,3 +1,4 @@
+pub mod addressing;
 pub mod cpu;
 pub mod debug;
 pub mod ines;

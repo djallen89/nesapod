@@ -79,7 +79,8 @@ pub enum Code {
     JMP, JSR, RTS, RTI,
     SEC, SED, SEI,
     CLC, CLD, CLI, CLV, 
-    NOP, BRK //56
+    NOP, BRK,
+    ILLEGAL
 }
 
 impl Code {
