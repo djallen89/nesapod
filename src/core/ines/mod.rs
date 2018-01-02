@@ -46,13 +46,6 @@ bitflags! {
     }
 }
 
-pub enum Mirroring {
-    Horizontal,
-    Vertical,
-    SingleScreen,
-    FourScreenVRAM
-}
-
 pub struct Header {
     prg_rom: u8,
     prg_ram: u8,
@@ -160,15 +153,15 @@ impl Header {
     }
 
     pub fn mirroring(&self) -> Mirroring {
-        match (self.flags_6 & Flags6::MIRROR.bits,
-               self.flags_6 & Flags6::FOURSCREEN.bits) {
+        match (self.flags_6 & Flags6::MIRROR.bits, (self.flags_6 & Flags6::FOURSCREEN.bits) >> 3) {
             (0, 0) => Mirroring::Horizontal,
             (1, 0) => Mirroring::Vertical,
-            (_, 1) | _ => Mirroring::FourScreenVRAM,
+            (_, _) => Mirroring::FourScreenVRAM,
         }
     }
 
-    pub fn mapper(&self) -> Mapper {
+    pub fn mapper(&self,) -> Mapper {
+        let mirroring 
         let lower = self.flags_6 & Flags6::LOWERMAPPER.bits >> 4;
         let upper = self.flags_7 & Flags7::UPPERMAPPER.bits;
         let id = upper + lower;
@@ -279,7 +272,15 @@ impl INES {
                 }
             },
             SXROM(SxRom::MMC1) => {
-                Err(format!("adfasdf"))
+                match idx {
+                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x6000 ... 0x7FFF => {
+                        self.prg_ram[(idx - 0x6000) as usize] = val;
+                        Ok(format!("Wrote {:x} to address {:x}", val, idx))
+                    },
+                    0x7FFF ... 0xFFFF => Err(format!("Can't write {} to {:x}!", val, idx)),
+                    _ => panic!("This should not happen with u16")
+                }
             },
             x => Err(format!("{:?} not covered yet", x))
         }

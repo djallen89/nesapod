@@ -1,8 +1,31 @@
+module sxrom {
+    pub enum Mirroring {
+        OneScreenLower = 0,
+        OneScreenUpper = 1,
+        Vertical = 2,
+        Horizontal = 3
+    }
+
+    pub enum PrgRomBank {
+        Ignore,
+        First,
+        Last
+    }
+
+    pub enum ChrRomBank {
+        Eight = 0,
+        TwoByFour = 1,
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
-pub enum SxRom {
-    MMC1 = 1,
-    NO105 = 105,
-    NO155 = 155
+pub struct SxRom {
+    id: u8,
+    control: MMC1Ctrl,
+    chr_bank_0: u8,
+    chr_bank_1: u8,
+    prg_bank_enable: bool
+    prg_bank: u8,
 }
 
 impl SxRom {

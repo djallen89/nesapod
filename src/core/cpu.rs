@@ -516,15 +516,11 @@ impl CPU {
             SEC => self.set_flag(min_cycles, StatusFlags::C),
             SED => self.set_flag(min_cycles, StatusFlags::D),
             SEI => self.set_flag(min_cycles, StatusFlags::I),
-            CLC => {
-            },
-            CLD => {
-            },
-            CLI => {
-            },
-            CLV => {
-            },
-            NOP => {
+            CLC => self.clear_flag(min_cycles, StatusFlags::C),
+            CLD => self.clear_flag(min_cycles, StatusFlags::D),
+            CLI => self.clear_flag(min_cycles, StatusFlags::I),
+            CLV => self.clear_flag(min_cycles, StatusFlags::V),
+            /*NOP => {
             },*/
             BRK => {
                 if self.stack_pointer < 2 {
@@ -754,5 +750,11 @@ impl CPU {
         self.counter += min_cycles;
         self.status_register |= flag;
         Ok(format!("Set {:?}", flag))
+    }
+
+    fn clear_flag(&mut self, min_cycles: u16, flag: StatusFlags) -> CPUResult<String> {
+        self.counter += min_cycles;
+        self.status_register &= !flag;
+        Ok(format!("Cleared {:?}", flag))
     }
 }
