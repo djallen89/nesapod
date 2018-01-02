@@ -301,6 +301,7 @@ impl CPU {
         use self::Code::*;
         match c {
             LDA | LDX | LDY => self.load(a, min_cycles, c),
+            
             STA => {
                 let val = self.accumulator;
                 self.store(a, min_cycles, val)
@@ -313,23 +314,38 @@ impl CPU {
                 let val = self.y;
                 self.store(a, min_cycles, val)
             },
-            /*ADC => {
-            },
-            SBC => {
-            },*/
+            
+            ADC => self.add(a, min_cycles),
+            SBC => self.sub(a, min_cycles),
+            
             INC => self.inc(a, min_cycles),
             INX | INY => self.inc_reg(min_cycles, c),
             DEC => self.dec(a, min_cycles),
             DEX | DEY => self.dec_reg(min_cycles, c),
-            /*ASL => {
-            },*/
-            LSR => {
-                self.lsr(a, min_cycles)
-            },
-            /*ROL => {
-            },
-            ROR => {
-            },*/
+            
+            ASL => self.shift_rotate(a, min_cycles, &|cpu, x| {
+                let carry = x & 0x01;
+                cpu.status_register.bits |= carry;
+                x >> 1
+            }),
+            LSR => self.shift_rotate(a, min_cycles, &|cpu, x| {
+                let carry = (x & 0b1000_0000) >> 7;
+                cpu.status_register.bits |= carry;
+                x << 1
+            }),
+            ROL => self.shift_rotate(a, min_cycles, &|cpu, x| {
+                let old_carry = (cpu.status_register & StatusFlags::C).bits;
+                let next_carry = x & 0b1000_0000;
+                cpu.status_register.bits |= next_carry >> 7;
+                (x << 1) + old_carry
+            }),
+            ROR => self.shift_rotate(a, min_cycles, &|cpu, x| {
+                let old_carry = (cpu.status_register & StatusFlags::C).bits;
+                let next_carry = x & 0x01;
+                cpu.status_register.bits |= next_carry;
+                (x >> 1) + old_carry 
+            }),
+            
             c @ AND | c @ ORA | c @ EOR => {
                 let (bytes, extra_cycles, val) = self.address_read(a)?;
                 self.pc += bytes;
@@ -352,7 +368,7 @@ impl CPU {
                 self.set_zn(res);
                 Ok(msg)
             },
-           
+
             c @ CMP | c @ CPX | c @ CPY => {
                 let (bytes, extra_cycles, val) = self.address_read(a)?;
                 let lhs = if c == Code::CMP {
@@ -379,6 +395,7 @@ impl CPU {
                 self.pc += bytes;
                 Ok(format!("Compared {} to {}", lhs, val))
             },
+            
             /*BIT => {},
             BCC => {           },
             BCS => {            },*/
@@ -496,18 +513,9 @@ impl CPU {
                 self.counter += min_cycles;
                 Ok(format!("Set pc to {:x} from interrupt", self.pc))
             },
-            SEC => {
-                self.counter += min_cycles;
-                self.status_register |=  StatusFlags::I;
-                Ok(format!("Set Interrupt Disable to 1"))
-            },
-            SED => {
-                self.counter += min_cycles;
-                self.status_register &= !StatusFlags::D;
-                Ok(format!("Cleared decimal flag"))
-            },
-            /* SEI => {
-            },
+            SEC => self.set_flag(min_cycles, StatusFlags::C),
+            SED => self.set_flag(min_cycles, StatusFlags::D),
+            SEI => self.set_flag(min_cycles, StatusFlags::I),
             CLC => {
             },
             CLD => {
@@ -539,6 +547,24 @@ impl CPU {
     }
         
     fn set_zn(&mut self, val: u8) {
+        if val == 0 {
+            self.status_register |= StatusFlags::Z;
+            self.status_register &= !StatusFlags::N;
+        } else if val > 127 {
+            self.status_register |= StatusFlags::N;
+            self.status_register &= !StatusFlags::Z;
+        } else {
+            self.status_register &= !StatusFlags::N;
+            self.status_register &= !StatusFlags::Z;
+        }
+    }
+
+    fn set_czn(&mut self, val: u8, carry: bool) {
+        if carry {
+            self.status_register |= StatusFlags::C;
+        } else {
+            self.status_register &= !StatusFlags::C;
+        }
         if val == 0 {
             self.status_register |= StatusFlags::Z;
             self.status_register &= !StatusFlags::N;
@@ -684,15 +710,49 @@ impl CPU {
         }
     }
 
-    fn lsr(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
-        let (bytes, val) = self.address_read_modify_write(a, &|cpu, x| {
-            let carry = x & 0x01;
-            cpu.status_register.bits |= carry;
-            x >> 1
-        })?;
+    fn add(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+        let (bytes, extra_cycles, rhs) = self.address_read(a)?;
+        let carry = if (self.status_register & StatusFlags::C) == StatusFlags::C {
+            1
+        } else {
+            0
+        };
+        let next_carry = u8::MAX - rhs - carry > self.accumulator || (rhs == 255 && carry == 1);
+        let res = self.accumulator.wrapping_add(rhs.wrapping_add(carry));
+        self.set_czn(res, next_carry);
+        self.accumulator = res;
+        self.pc += bytes;
+        self.counter += min_cycles + extra_cycles;
+        Ok(format!("Added {} to accumulator for {} with carry {}", rhs.wrapping_add(carry), res, next_carry))
+    }
+
+    fn sub(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+        let (bytes, extra_cycles, rhs) = self.address_read(a)?;
+        let carry = if (self.status_register & StatusFlags::C) == StatusFlags::C {
+            0
+        } else {
+            1
+        };
+        let next_carry = self.accumulator < (rhs + carry) || (rhs == 255 && carry == 1);
+        let res = self.accumulator.wrapping_sub(rhs.wrapping_add(carry));
+        self.set_czn(res, next_carry);
+        self.accumulator = res;
+        self.pc += bytes;
+        self.counter += min_cycles + extra_cycles;
+        Ok(format!("Subtracted {} from accumulator for {} with carry {}", rhs.wrapping_add(carry), res, next_carry))
+    }
+
+    fn shift_rotate(&mut self, a: Address, min_cycles: u16, op: &Fn(&mut CPU, u8) -> u8) -> CPUResult<String> {
+        let (bytes, val) = self.address_read_modify_write(a, op)?;
         self.set_zn(val);
         self.pc += bytes;
         self.counter += min_cycles;
         Ok(format!("Shifted {:?} right for result {:x}", a, val))
+    }
+
+    fn set_flag(&mut self, min_cycles: u16, flag: StatusFlags) -> CPUResult<String> {
+        self.counter += min_cycles;
+        self.status_register |= flag;
+        Ok(format!("Set {:?}", flag))
     }
 }
