@@ -2,81 +2,60 @@ use core::cpu::Code;
 
 #[derive(Debug, Clone, Copy)]
 pub enum Address {
-    Spec(AddressType),
+    Specified(AddressType),
     Implied,
     Acc,
     Invalid,
 }
 
-impl Address {
-    pub fn bytes(&self) -> u16 {
-        match *self {
-            Address::Spec(ref x) => x.bytes(),
-            _ => 0
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 pub enum AddressType {
-    Single(SingleType),
-    Double(DoubleType)
-}
-
-impl AddressType {
-    pub fn bytes(&self) -> u16 {
-        match *self {
-            AddressType::Single(_) => 1,
-            _ => 2
-        }
-    }
+    SingleByte(SingleType),
+    DoubleByte(DoubleType)
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum SingleType {
-    Imdiat,
-    Reltiv,
+    Immediate,
+    Relative,
     ZeroPg,
-    ZPIdxX,
-    ZPIdxY,
-    IdxInd,
-    IndIdx,
+    ZeroPg_X,
+    ZeroPg_Y,
+    Indirect_X,
+    Indirect_Y,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum DoubleType {
-    Absolt,
-    IdxedX,
-    IdxedY,
-    Indrct
+    Absolute,
+    Absolute_X,
+    Absolute_Y,
+    Indirect
 }
 
 pub fn opcode_table() -> Vec<(Code, Address, u16)> {
     use core::cpu::Code::*;
-    use core::addressing::Address::*;
-    use core::addressing::AddressType::*;
-    use core::addressing::SingleType::*;
-    use core::addressing::DoubleType::*;
-    let imp = Implied;
-    let ill = (ILLEGAL, Invalid, 0);
-    let ind = Spec(Double(Indrct));
-    let ixi = Spec(Single(IdxInd));
-    let iyi = Spec(Single(IndIdx));
-    let rel = Spec(Single(Reltiv));
-    let abs = Spec(Double(Absolt));
-    let imd = Spec(Single(Imdiat));
-    let zpg = Spec(Single(ZeroPg));
-    let zpx = Spec(Single(ZPIdxX));
-    let zpy = Spec(Single(ZPIdxY));
-    let abx = Spec(Double(IdxedX));
-    let aby = Spec(Double(IdxedY));
-    vec![(BRK, imp, 7), (ORA, ixi, 6),           ill,           ill, (ORA, zpg, 3), (ASL, zpg, 5), (PHP, imp, 3), (ORA, imd, 2), (ASL, Acc, 2),           ill, (ORA, abs, 4), (ASL, abs, 6), ill,
+    let acc = Address::Acc;
+    let imp = Address::Implied;
+    let ill = (ILLEGAL, Address::Invalid, 0);
+    let ixi = Address::Specified(AddressType::SingleByte(SingleType::Indirect_X));
+    let iyi = Address::Specified(AddressType::SingleByte(SingleType::Indirect_Y));
+    let rel = Address::Specified(AddressType::SingleByte(SingleType::Relative));
+    let imd = Address::Specified(AddressType::SingleByte(SingleType::Immediate));
+    let zpg = Address::Specified(AddressType::SingleByte(SingleType::ZeroPg));
+    let zpx = Address::Specified(AddressType::SingleByte(SingleType::ZeroPg_X));
+    let zpy = Address::Specified(AddressType::SingleByte(SingleType::ZeroPg_Y));
+    let ind = Address::Specified(AddressType::DoubleByte(DoubleType::Indirect));
+    let abs = Address::Specified(AddressType::DoubleByte(DoubleType::Absolute));
+    let abx = Address::Specified(AddressType::DoubleByte(DoubleType::Absolute_X));
+    let aby = Address::Specified(AddressType::DoubleByte(DoubleType::Absolute_Y));
+    vec![(BRK, imp, 7), (ORA, ixi, 6),           ill,           ill, (ORA, zpg, 3), (ASL, zpg, 5), (PHP, imp, 3), (ORA, imd, 2), (ASL, acc, 2),           ill, (ORA, abs, 4), (ASL, abs, 6), ill,
          (BPL, rel, 2), (ORA, iyi, 5),           ill,           ill, (ORA, zpx, 4), (ASL, zpx, 6), (CLC, imp, 2), (ORA, aby, 4),           ill,           ill, (ORA, abx, 4), (ASL, abx, 7), ill,
-         (JSR, abs, 6), (AND, ixi, 6),           ill, (BIT, zpg, 3), (AND, zpg, 3), (ROL, zpg, 5), (PLP, imp, 4), (AND, imd, 2), (ROL, Acc, 2), (BIT, abs, 4), (AND, abs, 4), (ROL, abs, 6), ill,
+         (JSR, abs, 6), (AND, ixi, 6),           ill, (BIT, zpg, 3), (AND, zpg, 3), (ROL, zpg, 5), (PLP, imp, 4), (AND, imd, 2), (ROL, acc, 2), (BIT, abs, 4), (AND, abs, 4), (ROL, abs, 6), ill,
          (BMI, rel, 2), (AND, iyi, 5),           ill,           ill, (AND, zpx, 4), (ROL, zpx, 6), (SEC, imp, 2), (AND, aby, 4),           ill,           ill, (AND, abx, 4), (ROL, abx, 7), ill,
-         (RTI, imp, 6), (EOR, ixi, 6),           ill,           ill, (EOR, zpg, 3), (LSR, zpg, 5), (PHA, imp, 3), (EOR, imd, 2), (LSR, Acc, 2), (JMP, abs, 3), (EOR, abs, 4), (LSR, abs, 6), ill,
+         (RTI, imp, 6), (EOR, ixi, 6),           ill,           ill, (EOR, zpg, 3), (LSR, zpg, 5), (PHA, imp, 3), (EOR, imd, 2), (LSR, acc, 2), (JMP, abs, 3), (EOR, abs, 4), (LSR, abs, 6), ill,
          (BVC, rel, 2), (EOR, iyi, 5),           ill,           ill, (EOR, zpx, 4), (LSR, zpx, 6), (CLI, imp, 2), (EOR, aby, 4),           ill,           ill, (EOR, abx, 4), (LSR, abx, 7), ill,
-         (RTS, imp, 6), (ADC, ixi, 6),           ill,           ill, (ADC, zpg, 3), (ROR, zpg, 5), (PLA, imp, 4), (ADC, imd, 2), (ROR, Acc, 2), (JMP, ind, 5), (ADC, abs, 4), (ROR, abs, 6), ill,
+         (RTS, imp, 6), (ADC, ixi, 6),           ill,           ill, (ADC, zpg, 3), (ROR, zpg, 5), (PLA, imp, 4), (ADC, imd, 2), (ROR, acc, 2), (JMP, ind, 5), (ADC, abs, 4), (ROR, abs, 6), ill,
          (BVS, rel, 2), (ADC, iyi, 5),           ill,           ill, (ADC, zpx, 4), (ROR, zpx, 6), (SEI, imp, 2), (ADC, aby, 5),           ill,           ill, (ADC, abx, 4), (ROR, abx, 7), ill,
          {        ill}, (STA, ixi, 6),           ill, (STY, zpg, 3), (STA, zpg, 3), (STX, zpg, 3), (DEY, imp, 2),           ill, (TXA, imp, 2), (STY, abs, 4), (STA, abs, 4), (STX, abs, 4), ill,
          (BCC, rel, 2), (STA, iyi, 6),           ill, (STY, zpx, 4), (STA, zpx, 4), (STX, zpy, 4), (TYA, imp, 2), (STA, aby, 5), (TXS, imp, 2),           ill, (STA, abx, 5),           ill, ill,

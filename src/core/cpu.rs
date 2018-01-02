@@ -1,15 +1,17 @@
-use std::{i8, u8, u16};
-use std::num::Wrapping;
+use std::{u8, u16};
 use core::ppu::PPU;
 use core::ines::INES;
-use core::addressing::{opcode_table, Address};
+use core::addressing::{opcode_table, Address, AddressType, SingleType, DoubleType};
+use core::addressing::Address::*;
+use core::addressing::AddressType::*;
+use core::addressing::SingleType::*;
+use core::addressing::DoubleType::*;
 
 pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
 pub const RESET_VECTOR: u16 = 0xFFFC;
 pub const STACK_REGION: u16 = 0x01A0;
-pub const COUNTER_CONST: u16 = 2;
 
 pub type CPUResult<T> = Result<T, String>;
 
@@ -40,7 +42,7 @@ pub fn counter_inc(x: u16, y: u8) -> u16 {
     //x + y > c  | x + y < c
     //c < x + y  | c > x + y
     //c - x < y  | c - x > y
-    if u8::MAX - ((x & 0x0F) as u8) > y {
+    if u8::MAX - (((x & 0xFF) >> 8) as u8) > y {
         0
     } else {
         1
@@ -117,7 +119,7 @@ impl CPU {
     }
 
     pub fn init(&mut self) -> CPUResult<String> {
-        self.execute(Code::JMP, Address::Spec(DoubleType::Indrct), 5)
+        self.execute(Code::JMP, Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)), 5)
     }
 
     pub fn get_pc(&self) -> u16 {
@@ -130,11 +132,11 @@ impl CPU {
 
     pub fn step(&mut self) -> CPUResult<String> {
         let pc = self.pc;
-        let (code, address, cycles) = opcode_table[self.read(pc)?];
+        let (code, address, cycles) = self.opcode_table[self.read(pc)? as usize];
         self.pc += 1;
         self.execute(code, address, cycles)
     }
-
+    
     pub fn read(&mut self, address: u16) -> CPUResult<u8> {
         match address {
             0x0000 ... 0x1FFF => Ok(self.ram[(address % 2048) as usize]),
@@ -151,7 +153,7 @@ impl CPU {
         let upper = self.read(addr + 1)?;
         Ok(combine(lower, upper))
     }
-
+    
     pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
         match address as usize {
             0x0000 ... 0x1FFF => {
@@ -169,135 +171,144 @@ impl CPU {
         }
     }
 
+    #[inline(always)]
+    fn decode_single_byte(&mut self, s: SingleType) -> CPUResult<(u16, u16)> {
+        let addr = self.read(self.pc)?;
+        match s {
+            ZeroPg => Ok((0, addr as u16)),
+            ZeroPg_X => Ok((0, self.x.wrapping_add(addr) as u16)),
+            ZeroPg_Y => Ok((0, (self.y as u16) + (addr as u16))),
+            Indirect_X => Ok((0, self.read_two_bytes(self.x.wrapping_add(addr) as u16)?)),
+            Indirect_Y => {
+                let pre_addr = self.read_two_bytes(addr as u16)?;
+                let extra = counter_inc(pre_addr, self.y);
+                let real_addr = (self.y as u16) + pre_addr;
+                Ok((extra, real_addr))
+            },
+            _ => panic!(format!("{:?} is not supported in decode_singlebyte", s))
+        }
+    }
+
+    fn decode_double_byte(&mut self, d: DoubleType) -> CPUResult<(u16, u16)> {
+        let addr = self.read_two_bytes(self.pc)?;
+        match d {
+            Absolute => Ok((0, addr)),
+            Absolute_Y => {
+                let extra = counter_inc(addr, self.x);
+                Ok((extra, (self.x as u16) + addr))
+            },
+            Absolute_X => {
+                let extra = counter_inc(addr, self.y);
+                Ok((extra, (self.y as u16) + addr))
+            },
+            Indirect => {
+                let real_addr = self.read_two_bytes(addr)?;
+                Ok((0, real_addr))
+            }
+        }
+    }
+
     /// Returns the number of bytes of an instruction, if it takes an extra cycle by
     /// crossing a page and the value stored at that location (excepting immediate and
     /// relative instructions).
     fn address_read(&mut self, a: Address) -> CPUResult<(u16, u16, u8)> {
-        use self::core::addressing::Address::*;
-        use self::core::addressing::AddressType::*;
-        use self::core::addressing::SinglyType::*;
-        use self::core::addressing::DoubleType::*;
+        use core::addressing::SingleType::{Relative, Immediate};
         let (bytes, extra_cycles, val) = match a {
             Invalid | Implied => panic!("Improper use of address_read!"),
             Acc => (0, 0, self.accumulator),
-            Spec(Single(x)) => {
-                let addr = self.read(self.pc)?;
-                let (extra_cycles, val) = match x {
-                    Imdiat | Reltiv => (0, addr),
-                    ZeroPg => (0, self.read(addr as u16)?),
-                    ZPIdxX => (0, self.read(self.x.wrapping_add(addr) as u16)?),
-                    ZPIdXY => (0, self.read((self.y as u16) + (addr as u16))?),
-                    IdxInd => {
-                        (0, self.read(self.read_two_bytes(self.x.wrapping_add(addr) as u16)?)?)
-                    },
-                    IndIdx => {
-                        let pre_addr = self.read_two_bytes(addr as u16)?;
-                        let (pre_addr_low, pre_addr_high) = split(pre_addr);
-                        let extra = counter_inc(self.y, pre_addr_low);
-                        let real_addr = (self.y as u16) + pre_addr;
-                        (extra, self.read(real_addr)?)
-                    }
-                };
+            Specified(SingleByte(Relative)) | 
+            Specified(SingleByte(Immediate)) => (1, 0, self.read(self.pc)?),
+            Specified(SingleByte(s)) => {
+                let (extra_cycles, addr) = self.decode_single_byte(s)?;
+                let val = self.read(addr)?;
                 (1, extra_cycles, val)
             },
-            Spec(Double(x)) => {
-                let addr = self.read_two_bytes(self.pc)?;
-                let (extra_cycles, val) = match x {
-                    Absolt => (0, self.read(addr)?),
-                    IdxedX => {
-                        let extra = counter_inc(self.x, (addr & 0xFF) >> 8);
-                        (extra, self.read((self.x as u16) + addr)?)
-                    },
-                    IdxedY => {
-                        let extra = counter_inc(self.y, (addr & 0xFF) >> 8);
-                        (extra, self.read((self.y as u16) + addr)?)
-                    },
-                    Indrct => {
-                        let real_addr = self.read(addr)?;
-                        (0, self.read(real_addr)?)
-                    }
-                };
+            Specified(DoubleByte(d)) => {
+                let (extra_cycles, addr) = self.decode_double_byte(d)?;
+                let val = self.read(addr)?;
                 (2, extra_cycles, val)
             }
         };
-        Ok(bytes, extra_cycles, val)
+        Ok((bytes, extra_cycles, val))
     }
 
-    fn address_read_modify_write(&mut self, a: Address, op: ) -> CPUResult<String> {
-        Ok(format!("blank"))
+    fn address_read_modify_write(&mut self, a: Address, op: &Fn(u8) -> u8) -> CPUResult<(u16, u8)> {
+        use core::addressing::Address::*;
+        use core::addressing::AddressType::*;
+        use core::addressing::SingleType::*;
+        use core::addressing::DoubleType::*;
+        
+        match a {
+            Invalid | Implied |
+            Specified(DoubleByte(Indirect)) |
+            Specified(SingleByte(Relative)) |
+            Specified(SingleByte(Immediate)) => panic!("Don't use addres_read_modify_write for {:?}", a),                
+            Acc => {
+                let val = op(self.accumulator);
+                self.accumulator = val;
+                Ok((0, val))
+            },
+            Specified(SingleByte(s)) => {
+                let (_, addr) = self.decode_single_byte(s)?;
+                let val = op(self.read(addr)?);
+                self.write(addr, val)?;
+                Ok((1, val))
+            },
+            Specified(DoubleByte(d)) => {
+                let (_, addr) = self.decode_double_byte(d)?;
+                let val = op(self.read(addr)?);
+                self.write(addr, val)?;
+                Ok((2, val))
+            }
+        }
     }
 
     /// Returns the number of bytes of the instruction, then the address to which the result
     ///of an operation will be written
     fn address_write(&mut self, a: Address) -> CPUResult<(u16, u16)> {
-        use self::core::addressing::Address::*;
-        use self::core::addressing::AddressType::*;
-        use self::core::addressing::SinglyType::*;
-        use self::core::addressing::DoubleType::*;
+        use core::addressing::Address::*;
+        use core::addressing::AddressType::*;
+        use core::addressing::SingleType::*;
+        use core::addressing::DoubleType::*;
 
         match a {
             Acc |
             Invalid | 
             Implied |
-            Spec(Single(Imdiat)) |
-            Spec(Single(Reltiv)) |
-            Spec(Double(Indrct)) => panic!("Improper use of address_write!"),
-            Spec(Single(x)) => {
-                let addr = self.read(self.pc)?;
-                let real_addr = match x {
-                    ZeroPg => addr as u16,
-                    ZPIdxX => self.x.wrapping_add(addr) as u16,
-                    ZPIdxY => self.y.wrapping_add(addr) as u16,
-                    IdxInd => self.read_two_bytes(self.x.wrapping_add(addr) as u16),
-                    IndIdx | _ => (self.y as u16) + self.read_two_bytes(addr as u16)?,
-                };
-                Ok((1, real_addr))
+            Specified(SingleByte(Immediate)) |
+            Specified(SingleByte(Relative)) |
+            Specified(DoubleByte(Indirect)) => panic!("Improper use of address_write!"),
+            Specified(SingleByte(s)) => {
+                let (_, addr) = self.decode_single_byte(s)?;
+                Ok((1, addr))
             },
-            Spec(Double(x)) => {
-                let addr = self.read_two_bytes(self.pc)?;
-                let real_addr = match x {
-                    Absolt => addr,
-                    IdxedX => (self.x as u16) + addr,
-                    IdxedY | _ => (self.y as u16) + addr
-                };
-                Ok((2, real_addr))
+            Specified(DoubleByte(d)) => {
+                let (_, addr) = self.decode_double_byte(d)?;
+                Ok((2, addr))
             }
         }
     }
 
-    fn execute(&mut self, c: Code, a: Address, cycles: u16) -> CPUResult<String> {
+    fn execute(&mut self, c: Code, a: Address, min_cycles: u16) -> CPUResult<String> {
         use self::Code::*;
         match c {
-            LDA => {
-                
-            },
-            LDX => {
-            },
-            LDY => {
-            },
-            STA => {
-            },
-            STX => {
-            },
-            STY => {
-            },
-            ADC => {
+            LDA => self.load(a, min_cycles, &mut self.accumulator),
+            LDX => self.load(a, min_cycles, &mut self.x),
+            LDY => self.load(a, min_cycles, &mut self.y),
+            STA => self.store(a, min_cycles, self.accumulator),
+            STX => self.store(a, min_cycles, self.x),
+            STY => self.store(a, min_cycles, self.y),
+            /*ADC => {
             },
             SBC => {
-            },
-            INC => {
-            },
-            INX => {
-            },
-            INY => {
-            },
-            DEC => {
-            },
-            DEX => {
-            },
-            DEY => {
-            },
-            ASL => {
+            },*/
+            INC => self.inc(a, min_cycles),
+            INX => self.inc_reg(min_cycles, &mut self.x),
+            INY => self.inc_reg(min_cycles, &mut self.y),
+            DEC => self.dec(a, min_cycles),
+            DEX => self.dec_reg(min_cycles, &mut self.x),
+            DEY => self.dec_reg(min_cycles, &mut self.y),
+            /*ASL => {
             },
             LSR => {
             },
@@ -380,11 +391,11 @@ impl CPU {
             NOP => {
             },
             BRK => {
-            },
-            Illegal => panic!("Illegal instruction!")
-        }
+            },*/
+            ILLEGAL | _ => panic!("Illegal instruction!")
+        }        
     }
-
+        
     fn set_zn(&mut self, val: u8) {
         print!("{:?} -> ", self.status_register);
         if val == 0 {
@@ -453,104 +464,53 @@ impl CPU {
         Ok(val)
     }
 
-    #[inline(always)]
-    pub fn decode_address_write(&self, a: Address) -> CPUResult<(u16, u16, u16)> {
-        match a {
-            Address::ZeroPage(u) => Ok((2, 3, u as u16)),
-            Address::ZPIndexedX(u) => Ok((2, 4, (u as u16) + (self.x as u16))),
-            Address::ZPIndexedY(u) => Ok((2, 4, (u as u16) + (self.y as u16))),
-            Address::Absolute(addr) => Ok((3, 4, addr)),
-            Address::AbsIndexedX(addr) => Ok((3, 5, addr + (self.x as u16))),
-            Address::AbsIndexedY(addr) => Ok((3, 5, addr + (self.y as u16))),
-            Address::ZPIndexedIndirect(u) => Ok((2, 6, self.x.wrapping_add(u) as u16)),
-            Address::ZPIndirectIndexed(u) => Ok((2, 6, (u as u16) + (self.y as u16))),
-            _=> Err(format!("Unexpected addressing mode {:?}", a))
-        }
-    }
-
-    fn load(&mut self, min_cycles: u16, a: Address, dest: &mut u8) -> CPUResult<String> {
-        let (bytes, extra_cycles, val) = self.decode_address(a)?;
-        let (bytes, cycles, val) = self.decode_address_read(a)?;
+    fn load(&mut self, a: Address, min_cycles: u16, dest: &mut u8) -> CPUResult<String> {
+        let (bytes, extra_cycles, val) = self.address_read(a)?;
         self.set_zn(val);
         self.pc += bytes;
-        self.counter += cycles;
-        match m {
-            Code::LDA => self.accumulator = val,
-            Code::LDX => self.x = val,
-            Code::LDY => self.y = val,
-            x => panic!(format!("Expected Load; Found {:?}", x))
-        }
-
-        Ok(format!("Loaded {:b} into {:?}", val, m))
+        self.counter += min_cycles + extra_cycles;
+        *dest = val;
+        Ok(format!("Loaded {:b} into a register", val))
     }
 
-    fn store(&mut self, m: Code, a: Address) -> CPUResult<String> {
-        let val = match m {
-            Code::STA => self.accumulator,
-            Code::STX => self.x,
-            Code::STY => self.y,
-            x => panic!(format!("Expected Load; Found {:?}", x))
-        };
-        
-        let (bytes, cycles, addr) = self.decode_address_write(a)?;
+    fn store(&mut self, a: Address, min_cycles: u16, val: u8) -> CPUResult<String> {
+        let (bytes, addr) = self.address_write(a)?;
         self.write(addr, val)?;
         self.pc += bytes;
-        self.counter += cycles;
-
-        Ok(format!("Stored {:?} into {}", m, val))
+        self.counter += min_cycles;
+        Ok(format!("Stored {} into {:?}", val, a))
     }
 
-    fn wrapped_dec(&mut self, u: u8) -> CPUResult<u8> {
-        let val = (Wrapping(u) - Wrapping(1)).0;
-        self.set_zn(val);
-        Ok(val)
-    }
-
-    fn inc(&mut self, a: Address) -> CPUResult<String> {
-        let (bytes, cycles, address) = self.decode_address_write(a)?;
+    fn inc(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+        let (bytes, val) = self.address_read_modify_write(a, &|x| {x.wrapping_add(1)})?;
         self.pc += bytes;
-        self.counter += cycles + COUNTER_CONST;
-        let val = self.read(address)?.wrapping_add(1);
+        self.counter += min_cycles;
         self.set_zn(val);
-        self.write(address, val)
+        Ok(format!("Incremented {:?}", a))
     }
 
-    fn inc_reg(&mut self, m: Code) -> CPUResult<String> {
-        self.pc += 1;
-        self.counter += 2;
-        let val;
-        if m == Code::INX {
-            val = self.x.wrapping_add(1);
-            self.x = val;
-        } else {
-            let val = self.y.wrapping_add(1);
-            self.y = val;
-        };
+    fn inc_reg(&mut self, min_cycles: u16, dest: &mut u8) -> CPUResult<String> {
+        let val = dest.wrapping_add(1);
+        *dest = val;
+        self.counter += min_cycles;
         self.set_zn(val);
-        Ok(format!("Called {:?} for a result of {}", m, val))
+        Ok(format!("Incremented x or y by one"))
     }
 
-    fn dec(&mut self, a: Address) -> CPUResult<String> {
-        let (bytes, cycles, address) = self.decode_address_write(a)?;
+    fn dec(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+        let (bytes, val) = self.address_read_modify_write(a, &|x| {x.wrapping_sub(1)})?;
         self.pc += bytes;
-        self.counter += cycles + COUNTER_CONST;
-        let val = self.read(address)?.wrapping_sub(1);
+        self.counter += min_cycles;
         self.set_zn(val);
-        self.write(address, val)
+        Ok(format!("Decremented {:?}", a))
     }
-
-    fn dec_reg(&mut self, m: Code) -> CPUResult<String> {
-        self.pc += 1;
-        self.counter += 2;
-        let val;
-        if m == Code::DEX {
-            val = self.x.wrapping_sub(1);
-            self.x = val;
-        } else { 
-            let val = self.y.wrapping_sub(1);
-            self.y = val;
-        }
-        Ok(format!("Called {:?} for a result of {}", m, val))
+    
+    fn dec_reg(&mut self, min_cycles: u16, dest: &mut u8) -> CPUResult<String> {
+        let val = dest.wrapping_sub(1);
+        *dest = val;
+        self.counter += min_cycles;
+        self.set_zn(val);
+        Ok(format!("Decremented x or y by one"))
     }
 
     fn lsr_acc(&mut self) -> CPUResult<String> {
@@ -565,8 +525,8 @@ impl CPU {
         Ok(format!("Shifted Accumulator right for result {:x}", self.accumulator))
     }
 
-    fn lsr_mem(&mut self, a: Address) -> CPUResult<String> {
-        let (bytes, cycles, addr) = self.decode_address_write(a)?;
+    fn lsr_mem(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+        let (bytes, addr) = self.address_write(a)?;
         let mut val = self.read(addr)?;
         let carry = val & 0b0000_0001;
         val >>= 1;
@@ -574,19 +534,13 @@ impl CPU {
         self.status_register.bits |= carry;
         self.write(addr, val)?;
         self.pc += bytes;
-        self.counter += cycles + COUNTER_CONST;
+        self.counter += min_cycles;
         Ok(format!("Shifted {:x} right for result {:x}", addr, val))
     }
 
     /*
     fn _execute(&mut self, instruction: Instruction) -> CPUResult<String> {
         match (instruction.mnemonic, instruction.address) {
-            /* LDA, LDX, LDY, */
-            (m @ Code::LDA, a) | (m @ Code::LDX, a) | (m @ Code::LDY, a) => self.load(m, a),
-            /* STA, STX, STY, */
-            (m @ Code::STA, a) | (m @ Code::STX, a) | (m @ Code::STY, a) => self.store(m, a),
-            /* ADC, SBC, */
-            
             /* INC */ 
             (Code::INC, a) => self.inc(a),
             /*INX, INY */
