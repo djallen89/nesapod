@@ -133,7 +133,7 @@ impl CPU {
     pub fn step(&mut self) -> CPUResult<String> {
         let addr = self.pc;
         let opcode = self.read(addr)? as usize;
-        print!("opcode: {:x}, ", opcode);
+        print!("{:x}, opcode: {:x}, ", self.pc, opcode);
         let (code, address, cycles) = self.opcode_table[opcode];
         println!("{:?}", code);
         self.pc += 1;
@@ -377,7 +377,7 @@ impl CPU {
                 }
                 self.counter += min_cycles + extra_cycles;
                 self.pc += bytes;
-                Ok(format!("Compared register ({}) to {}", lhs, val))
+                Ok(format!("Compared {} to {}", lhs, val))
             },
             /*BIT => {},
             BCC => {           },
@@ -393,15 +393,14 @@ impl CPU {
                 };
                 if cond {
                     self.counter += min_cycles + 1 + 2 * extra_cycles;
-                    self.pc += min_cycles;
+                    self.pc += bytes;
                     if val > 128 {
-                        self.pc += (!val) as u16;
-                        Ok(format!("Branched by -{}", !val))
+                        self.pc -= (!val) as u16;
+                        Ok(format!("Branched by -{}", !val as u16))
                     } else {
                         self.pc += val as u16;
                         Ok(format!("Branched by {}", val))
                     }
-
                 } else {
                     self.counter += min_cycles;
                     self.pc += bytes;
@@ -473,8 +472,9 @@ impl CPU {
                     Specified(DoubleByte(Absolute)) => {
                         let pc = self.pc;
                         let addr = self.read_two_bytes(pc)?;
+                        println!("{:x}", addr);
                         self.counter += min_cycles;
-                        let ret_addr = self.pc + 2;
+                        let ret_addr = self.pc + 2 - 1;
                         self.stack_push_double(ret_addr)?;
                         self.pc = addr;
                         Ok(format!("Pushed {:x} onto stack and set pc to {:x}.", ret_addr, addr))
@@ -492,7 +492,7 @@ impl CPU {
                 let flags = self.stack_pop()?;
                 self.status_register.bits = flags;
                 let addr = self.stack_pop_double()?;
-                self.pc = addr;
+                self.pc = addr + 1;
                 self.counter += min_cycles;
                 Ok(format!("Set pc to {:x} from interrupt", self.pc))
             },
