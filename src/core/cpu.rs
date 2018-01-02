@@ -131,8 +131,11 @@ impl CPU {
     }
 
     pub fn step(&mut self) -> CPUResult<String> {
-        let pc = self.pc;
-        let (code, address, cycles) = self.opcode_table[self.read(pc)? as usize];
+        let addr = self.pc;
+        let opcode = self.read(addr)? as usize;
+        print!("opcode: {:x}, ", opcode);
+        let (code, address, cycles) = self.opcode_table[opcode];
+        println!("{:?}", code);
         self.pc += 1;
         self.execute(code, address, cycles)
     }
@@ -173,12 +176,16 @@ impl CPU {
 
     #[inline(always)]
     fn decode_single_byte(&mut self, s: SingleType) -> CPUResult<(u16, u16)> {
-        let addr = self.read(self.pc)?;
+        let pc = self.pc;
+        let addr = self.read(pc)?;
         match s {
             ZeroPg => Ok((0, addr as u16)),
             ZeroPg_X => Ok((0, self.x.wrapping_add(addr) as u16)),
             ZeroPg_Y => Ok((0, (self.y as u16) + (addr as u16))),
-            Indirect_X => Ok((0, self.read_two_bytes(self.x.wrapping_add(addr) as u16)?)),
+            Indirect_X => {
+                let real_addr = self.x.wrapping_add(addr) as u16;
+                Ok((0, self.read_two_bytes(real_addr)?))
+            },
             Indirect_Y => {
                 let pre_addr = self.read_two_bytes(addr as u16)?;
                 let extra = counter_inc(pre_addr, self.y);
@@ -190,7 +197,8 @@ impl CPU {
     }
 
     fn decode_double_byte(&mut self, d: DoubleType) -> CPUResult<(u16, u16)> {
-        let addr = self.read_two_bytes(self.pc)?;
+        let pc = self.pc;
+        let addr = self.read_two_bytes(pc)?;
         match d {
             Absolute => Ok((0, addr)),
             Absolute_Y => {
@@ -201,10 +209,7 @@ impl CPU {
                 let extra = counter_inc(addr, self.y);
                 Ok((extra, (self.y as u16) + addr))
             },
-            Indirect => {
-                let real_addr = self.read_two_bytes(addr)?;
-                Ok((0, real_addr))
-            }
+            Indirect => panic!("No indirect in decode double byte!")
         }
     }
 
@@ -212,12 +217,12 @@ impl CPU {
     /// crossing a page and the value stored at that location (excepting immediate and
     /// relative instructions).
     fn address_read(&mut self, a: Address) -> CPUResult<(u16, u16, u8)> {
-        use core::addressing::SingleType::{Relative, Immediate};
+        let pc = self.pc;
         let (bytes, extra_cycles, val) = match a {
             Invalid | Implied => panic!("Improper use of address_read!"),
             Acc => (0, 0, self.accumulator),
             Specified(SingleByte(Relative)) | 
-            Specified(SingleByte(Immediate)) => (1, 0, self.read(self.pc)?),
+            Specified(SingleByte(Immediate)) => (1, 0, self.read(pc)?),
             Specified(SingleByte(s)) => {
                 let (extra_cycles, addr) = self.decode_single_byte(s)?;
                 let val = self.read(addr)?;
@@ -232,7 +237,7 @@ impl CPU {
         Ok((bytes, extra_cycles, val))
     }
 
-    fn address_read_modify_write(&mut self, a: Address, op: &Fn(u8) -> u8) -> CPUResult<(u16, u8)> {
+    fn address_read_modify_write(&mut self, a: Address, op: &Fn(&mut CPU, u8) -> u8) -> CPUResult<(u16, u8)> {
         use core::addressing::Address::*;
         use core::addressing::AddressType::*;
         use core::addressing::SingleType::*;
@@ -244,19 +249,22 @@ impl CPU {
             Specified(SingleByte(Relative)) |
             Specified(SingleByte(Immediate)) => panic!("Don't use addres_read_modify_write for {:?}", a),                
             Acc => {
-                let val = op(self.accumulator);
-                self.accumulator = val;
+                let val = self.accumulator;
+                let res = op(self, val);
+                self.accumulator = res;
                 Ok((0, val))
             },
             Specified(SingleByte(s)) => {
                 let (_, addr) = self.decode_single_byte(s)?;
-                let val = op(self.read(addr)?);
-                self.write(addr, val)?;
+                let val = self.read(addr)?;
+                let res = op(self, val);
+                self.write(addr, res)?;
                 Ok((1, val))
             },
             Specified(DoubleByte(d)) => {
                 let (_, addr) = self.decode_double_byte(d)?;
-                let val = op(self.read(addr)?);
+                let val = self.read(addr)?;
+                let res = op(self, val);
                 self.write(addr, val)?;
                 Ok((2, val))
             }
@@ -292,55 +300,115 @@ impl CPU {
     fn execute(&mut self, c: Code, a: Address, min_cycles: u16) -> CPUResult<String> {
         use self::Code::*;
         match c {
-            LDA => self.load(a, min_cycles, &mut self.accumulator),
-            LDX => self.load(a, min_cycles, &mut self.x),
-            LDY => self.load(a, min_cycles, &mut self.y),
-            STA => self.store(a, min_cycles, self.accumulator),
-            STX => self.store(a, min_cycles, self.x),
-            STY => self.store(a, min_cycles, self.y),
+            LDA | LDX | LDY => self.load(a, min_cycles, c),
+            STA => {
+                let val = self.accumulator;
+                self.store(a, min_cycles, val)
+            },
+            STX => {
+                let val = self.x;
+                self.store(a, min_cycles, val)
+            },
+            STY => {
+                let val = self.y;
+                self.store(a, min_cycles, val)
+            },
             /*ADC => {
             },
             SBC => {
             },*/
             INC => self.inc(a, min_cycles),
-            INX => self.inc_reg(min_cycles, &mut self.x),
-            INY => self.inc_reg(min_cycles, &mut self.y),
+            INX | INY => self.inc_reg(min_cycles, c),
             DEC => self.dec(a, min_cycles),
-            DEX => self.dec_reg(min_cycles, &mut self.x),
-            DEY => self.dec_reg(min_cycles, &mut self.y),
+            DEX | DEY => self.dec_reg(min_cycles, c),
             /*ASL => {
-            },
+            },*/
             LSR => {
+                self.lsr(a, min_cycles)
             },
-            ROL => {
+            /*ROL => {
             },
             ROR => {
+            },*/
+            c @ AND | c @ ORA | c @ EOR => {
+                let (bytes, extra_cycles, val) = self.address_read(a)?;
+                self.pc += bytes;
+                self.counter += min_cycles + extra_cycles;
+                let msg = match c {
+                    AND => {
+                        self.accumulator &= val;
+                        format!("Logical AND result: {:x}", val)
+                    },
+                    EOR => {
+                        self.accumulator ^= val;
+                        format!("Logical EOR result: {:x}", val)
+                    },
+                    ORA | _ => {
+                        self.accumulator |= val;
+                        format!("Logical ORA result: {:x}", val)
+                    }
+                };
+                let res = self.accumulator;
+                self.set_zn(res);
+                Ok(msg)
             },
-            AND => {
+           
+            c @ CMP | c @ CPX | c @ CPY => {
+                let (bytes, extra_cycles, val) = self.address_read(a)?;
+                let lhs = if c == Code::CMP {
+                    self.accumulator
+                } else if c == Code::CPX {
+                    self.x
+                } else {
+                    self.y
+                };
+                if lhs < val {
+                    self.status_register |= StatusFlags::N;
+                    self.status_register &= !StatusFlags::Z;
+                    self.status_register &= !StatusFlags::C;
+                } else if lhs == val {
+                    self.status_register |= StatusFlags::Z;
+                    self.status_register |= StatusFlags::C;
+                    self.status_register &= !StatusFlags::N;
+                } else {
+                    self.status_register &= !StatusFlags::N;
+                    self.status_register &= !StatusFlags::Z;
+                    self.status_register |= StatusFlags::C;
+                }
+                self.counter += min_cycles + extra_cycles;
+                self.pc += bytes;
+                Ok(format!("Compared register ({}) to {}", lhs, val))
             },
-            ORA => {
+            /*BIT => {},
+            BCC => {           },
+            BCS => {            },*/
+            BEQ | BNE | BPL => {
+                let (bytes, extra_cycles, val) = self.address_read(a)?;
+                let cond = if c == BEQ {
+                    (self.status_register & StatusFlags::Z) == StatusFlags::Z
+                } else if c == BNE {
+                    (self.status_register & StatusFlags::Z) != StatusFlags::Z
+                } else {
+                    (self.status_register & StatusFlags::N) != StatusFlags::N
+                };
+                if cond {
+                    self.counter += min_cycles + 1 + 2 * extra_cycles;
+                    self.pc += min_cycles;
+                    if val > 128 {
+                        self.pc += (!val) as u16;
+                        Ok(format!("Branched by -{}", !val))
+                    } else {
+                        self.pc += val as u16;
+                        Ok(format!("Branched by {}", val))
+                    }
+
+                } else {
+                    self.counter += min_cycles;
+                    self.pc += bytes;
+                    Ok(format!("No branch."))
+                }
             },
-            EOR => {
-            },
-            CMP => {
-            },
-            CPX => {
-            },
-            CPY => {
-            },
-            BIT => {
-            },
-            BCC => {
-            },
-            BCS => {
-            },
-            BEQ => {
-            },
-            BMI => {
-            },
-            BNE => {
-            },
-            BPL => {
+            /*BMI => {
             },
             BVC => {
             },
@@ -355,30 +423,90 @@ impl CPU {
             TYA => {
             },
             TSX => {
-            },
+            },*/
             TXS => {
+                let val = self.x;
+                self.stack_push(val)?;
+                self.counter += min_cycles;
+                Ok(format!("Transferred x to stack"))
             },
             PHA => {
+                self.counter += min_cycles;
+                let val = self.accumulator;
+                self.stack_push(val)
             },
             PLA => {
+                self.counter += min_cycles;
+                let acc = self.stack_pop()?;
+                self.set_zn(acc);
+                self.accumulator = acc;
+                Ok(format!("Pulled accumulator from stack!"))
             },
             PHP => {
+                self.counter += min_cycles;
+                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                self.stack_push(flags.bits)
             },
-            PLP => {
-            },
+            /*PLP => {
+            },*/
             JMP => {
+                match a {
+                    Specified(DoubleByte(Indirect)) => {
+                        let pc = self.pc;
+                        let addr = self.read_two_bytes(pc)?;
+                        self.counter += min_cycles;
+                        self.pc = addr;
+                        Ok(format!("Set pc to {:x}", addr))
+                    },
+                    Specified(DoubleByte(Absolute)) => {
+                        let pc = self.pc;
+                        let addr = self.read_two_bytes(pc)?;
+                        self.counter += min_cycles;
+                        self.pc = addr;
+                        Ok(format!("Set pc to {:x}", addr))
+                    }
+                    _ => Err(format!("JMP doesn't use {:?}", a))
+                }
             },
             JSR => {
+                match a {
+                    Specified(DoubleByte(Absolute)) => {
+                        let pc = self.pc;
+                        let addr = self.read_two_bytes(pc)?;
+                        self.counter += min_cycles;
+                        let ret_addr = self.pc + 2;
+                        self.stack_push_double(ret_addr)?;
+                        self.pc = addr;
+                        Ok(format!("Pushed {:x} onto stack and set pc to {:x}.", ret_addr, addr))
+                    },
+                    _ => Err(format!("JSR doesn't use {:?}", a))
+                }
             },
             RTS => {
+                let addr = self.stack_pop_double()?;
+                self.pc = addr;
+                self.counter += min_cycles;
+                Ok(format!("Returned pc to {:x}", self.pc)) 
             },
             RTI => {
+                let flags = self.stack_pop()?;
+                self.status_register.bits = flags;
+                let addr = self.stack_pop_double()?;
+                self.pc = addr;
+                self.counter += min_cycles;
+                Ok(format!("Set pc to {:x} from interrupt", self.pc))
             },
             SEC => {
+                self.counter += min_cycles;
+                self.status_register |=  StatusFlags::I;
+                Ok(format!("Set Interrupt Disable to 1"))
             },
             SED => {
+                self.counter += min_cycles;
+                self.status_register &= !StatusFlags::D;
+                Ok(format!("Cleared decimal flag"))
             },
-            SEI => {
+            /* SEI => {
             },
             CLC => {
             },
@@ -389,15 +517,28 @@ impl CPU {
             CLV => {
             },
             NOP => {
-            },
-            BRK => {
             },*/
-            ILLEGAL | _ => panic!("Illegal instruction!")
+            BRK => {
+                if self.stack_pointer < 2 {
+                    Err(format!("Stack overflowed!"))
+                } else {
+                    self.counter += 7;
+                    let addr = self.pc;
+                    self.stack_push_double(addr)?;
+                    
+                    let irq = self.read_two_bytes(0xFFFE)?;
+                    self.pc = irq;
+                    
+                    let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                    self.stack_push(flags.bits)
+                }
+
+            },
+            ILLEGAL | _ => Err(format!("Illegal instruction {:?}!", c))
         }        
     }
         
     fn set_zn(&mut self, val: u8) {
-        print!("{:?} -> ", self.status_register);
         if val == 0 {
             self.status_register |= StatusFlags::Z;
             self.status_register &= !StatusFlags::N;
@@ -408,7 +549,6 @@ impl CPU {
             self.status_register &= !StatusFlags::N;
             self.status_register &= !StatusFlags::Z;
         }
-        println!("{:?}", self.status_register);
     }
 
     fn stack_decrement(&mut self) -> CPUResult<()> {
@@ -464,12 +604,17 @@ impl CPU {
         Ok(val)
     }
 
-    fn load(&mut self, a: Address, min_cycles: u16, dest: &mut u8) -> CPUResult<String> {
+    fn load(&mut self, a: Address, min_cycles: u16, c: Code) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a)?;
         self.set_zn(val);
         self.pc += bytes;
         self.counter += min_cycles + extra_cycles;
-        *dest = val;
+        match c {
+            LDA => self.accumulator = val,
+            LDX => self.x = val,
+            LDY => self.y = val,
+            _ => panic!(format!("Expected LDx, found {:?}", c))
+        }
         Ok(format!("Loaded {:b} into a register", val))
     }
 
@@ -482,262 +627,72 @@ impl CPU {
     }
 
     fn inc(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
-        let (bytes, val) = self.address_read_modify_write(a, &|x| {x.wrapping_add(1)})?;
+        let (bytes, val) = self.address_read_modify_write(a, &|cpu, x| {x.wrapping_add(1)})?;
         self.pc += bytes;
         self.counter += min_cycles;
         self.set_zn(val);
         Ok(format!("Incremented {:?}", a))
     }
 
-    fn inc_reg(&mut self, min_cycles: u16, dest: &mut u8) -> CPUResult<String> {
-        let val = dest.wrapping_add(1);
-        *dest = val;
-        self.counter += min_cycles;
-        self.set_zn(val);
-        Ok(format!("Incremented x or y by one"))
+    fn inc_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
+        match c {
+            INX => {
+                let val = self.x.wrapping_add(1);
+                self.counter += min_cycles;
+                self.set_zn(val);
+                self.x = val;
+                Ok(format!("Incremented x by one for res {}", val))
+            },
+            INY => {
+                let val = self.y.wrapping_add(1);
+                self.counter += min_cycles;
+                self.set_zn(val);
+                self.y = val;
+                Ok(format!("Incremented x by one for res {}", val))
+            },
+            _ => panic!(format!("Expected INX/INY, found {:?}", c))
+        }
     }
 
     fn dec(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
-        let (bytes, val) = self.address_read_modify_write(a, &|x| {x.wrapping_sub(1)})?;
+        let (bytes, val) = self.address_read_modify_write(a, &|cpu, x| {
+            x.wrapping_sub(1)
+        })?;
+        self.set_zn(val);
         self.pc += bytes;
         self.counter += min_cycles;
-        self.set_zn(val);
         Ok(format!("Decremented {:?}", a))
     }
     
-    fn dec_reg(&mut self, min_cycles: u16, dest: &mut u8) -> CPUResult<String> {
-        let val = dest.wrapping_sub(1);
-        *dest = val;
-        self.counter += min_cycles;
-        self.set_zn(val);
-        Ok(format!("Decremented x or y by one"))
+    fn dec_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
+        match c {
+            DEX => {
+                let val = self.x.wrapping_sub(1);
+                self.counter += min_cycles;
+                self.set_zn(val);
+                self.x = val;
+                Ok(format!("Incremented x by one"))
+            },
+            DEY => {
+                let val = self.y.wrapping_sub(1);
+                self.counter += min_cycles;
+                self.set_zn(val);
+                self.y = val;
+                Ok(format!("Incremented x by one"))
+            },
+            _ => panic!(format!("Expected DEX/DEY, found {:?}", c))
+        }
     }
 
-    fn lsr_acc(&mut self) -> CPUResult<String> {
-        let carry = self.accumulator & 0b0000_0001;
-        let mut val = self.accumulator;
-        val >>= 1;
+    fn lsr(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+        let (bytes, val) = self.address_read_modify_write(a, &|cpu, x| {
+            let carry = x & 0x01;
+            cpu.status_register.bits |= carry;
+            x >> 1
+        })?;
         self.set_zn(val);
-        self.status_register.bits |= carry;
-        self.accumulator = val;
-        self.pc += 1;
-        self.counter += 2;
-        Ok(format!("Shifted Accumulator right for result {:x}", self.accumulator))
-    }
-
-    fn lsr_mem(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
-        let (bytes, addr) = self.address_write(a)?;
-        let mut val = self.read(addr)?;
-        let carry = val & 0b0000_0001;
-        val >>= 1;
-        self.set_zn(val);
-        self.status_register.bits |= carry;
-        self.write(addr, val)?;
         self.pc += bytes;
         self.counter += min_cycles;
-        Ok(format!("Shifted {:x} right for result {:x}", addr, val))
+        Ok(format!("Shifted {:?} right for result {:x}", a, val))
     }
-
-    /*
-    fn _execute(&mut self, instruction: Instruction) -> CPUResult<String> {
-        match (instruction.mnemonic, instruction.address) {
-            /* INC */ 
-            (Code::INC, a) => self.inc(a),
-            /*INX, INY */
-            (m @ Code::INX, Address::Implied) |
-            (m @ Code::INY, Address::Implied) => self.inc_reg(m),
-            /* DEC, DEX, DEY, */
-            (Code::DEC, a) => self.dec(a),
-            (m @ Code::DEX, Address::Implied) |
-            (m @ Code::DEY, Address::Implied) => self.dec_reg(m),
-            /* ASL, LSR */
-            (Code::LSR, Address::Accumulator) => self.lsr_acc(),
-            (Code::LSR, a) => self.lsr_mem(a),
-            /* ROL, ROR */
-            
-            /* AND, ORA, EOR, */
-            (c @ Code::AND, a) | (c @ Code::ORA, a) | (c @ Code::EOR, a) => {
-                let (bytes, cycles, val) = self.decode_address_read(a)?;
-                self.pc += bytes;
-                self.counter += cycles;
-                let msg = match c {
-                    Code::AND => {
-                        self.accumulator &= val;
-                        format!("Logical and {:x}", val)
-                    },
-                    Code::EOR => {
-                        self.accumulator ^= val;
-                        format!("Exclusive or {:x}", val)
-                    },
-                    _ => {
-                        self.accumulator |= val;
-                        format!("Logical or {:x}", val)
-                    }
-                };
-                let res = self.accumulator;
-                self.set_zn(res);
-                Ok(msg)
-            },
-            /* CMP, CPX, CPY, */
-            (c @ Code::CMP, a) | (c @ Code::CPX, a) | (c @ Code::CPY, a) => {
-                let (bytes, cycles, val) = self.decode_address_read(a)?;
-                let lhs = if c == Code::CMP {
-                    self.accumulator
-                } else if c == Code::CPX {
-                    self.x
-                } else {
-                    self.y
-                };
-                if lhs < val {
-                    self.status_register |= StatusFlags::N;
-                    self.status_register &= !StatusFlags::Z;
-                    self.status_register &= !StatusFlags::C;
-                } else if lhs == val {
-                    self.status_register |= StatusFlags::Z;
-                    self.status_register |= StatusFlags::C;
-                    self.status_register &= !StatusFlags::N;
-                } else {
-                    self.status_register &= !StatusFlags::N;
-                    self.status_register &= !StatusFlags::Z;
-                    self.status_register |= StatusFlags::C;
-                }
-                self.counter += cycles;
-                self.pc += bytes;
-                Ok(format!("Compared register ({}) to {}", lhs, val))
-            },
-            /* BIT, */
-            
-            /* BCC, BCS, BMI, */
-            /* BNE, BEQ, BPL */ 
-            (c @ Code::BNE, Address::Relative(d)) |
-            (c @ Code::BEQ, Address::Relative(d)) |
-            (c @ Code::BPL, Address::Relative(d)) => {
-                print!("{:?}, Flags: {:?}, ", c, self.status_register);
-                print!("{:?}, ", (self.status_register & StatusFlags::Z) == StatusFlags::Z);
-                println!("{:?}", self.status_register & StatusFlags::N);
-                let cond = if c == Code::BEQ {
-                    (self.status_register & StatusFlags::Z) == StatusFlags::Z
-                } else if c == Code::BNE {
-                    (self.status_register & StatusFlags::Z) != StatusFlags::Z
-                } else {
-                    (self.status_register & StatusFlags::N) != StatusFlags::N
-                };
-                if cond {
-                    self.counter += 3 + 2 * (counter_inc(self.pc, d as u8) as u16);
-                    println!("{}", self.pc);
-                    if d < 0 {
-                        self.pc -= (-d) as u16
-                    } else {
-                        self.pc += d as u16;
-                    }
-                    println!("{}", self.pc);
-                    Ok(format!("Branched by {}", d))
-                } else {
-                    self.counter += 2;
-                    self.pc += 2;
-                    Ok(format!("No branch."))
-                }
-            },
-            /* BVC, BVS, */
-            /* TAX, TXA, TAY, TYA, TSX, TXS, */
-            (Code::TXS, Address::Implied) => {
-                let val = self.x;
-                self.stack_push(val)?;
-                self.pc += 1;
-                self.counter += 2;
-                Ok(format!("Transferred x to stack"))
-            }
-            /* PHA */ 
-            (Code::PHA, Address::Implied) => {
-                self.counter += 3;
-                self.pc += 1;
-                let val = self.accumulator;
-                self.stack_push(val)
-            },
-            /* PHP */
-            (Code::PHP, Address::Implied) => {
-                self.counter += 2;
-                self.pc += 1;
-                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                self.stack_push(flags.bits)
-            },
-            /* PLA */
-            (Code::PLA, Address::Implied) => {
-                self.counter += 4;
-                self.pc += 1;
-                let acc = self.stack_pop()?;
-                self.set_zn(acc);
-                self.accumulator = acc;
-                Ok(format!("Pulled accumulator from stack!"))
-            }
-            /* PLP, */
-            /* JMP */
-            (Code::JMP, Address::Absolute(idx)) => {
-                self.counter += 3;
-                self.pc = idx;
-                Ok(format!("Set pc to {:x}", idx))
-            },
-            (Code::JMP, Address::Indirect(idx)) => {
-                self.counter += 5;
-                let addr = self.read_double(idx)?;
-                self.pc = addr;
-                Ok(format!("Set pc to {:x}", addr))
-            },
-            /*JSR */
-            (Code::JSR, Address::Absolute(idx)) => {
-                self.counter += 6;
-                let ret_addr = self.pc + 2;
-                self.stack_push_double(ret_addr)?;
-                self.pc = idx;
-                Ok(format!("Pushed {:x} onto stack and set pc to {:x}.", ret_addr, idx))
-            },
-            /*RTS, RTI, */
-            (Code::RTS, Address::Implied) => {
-                let addr = self.stack_pop_double()?;
-                self.pc = addr + 1;
-                self.counter += 6;
-                Ok(format!("Returned pc to {:x}", self.pc)) 
-            },
-            (Code::RTI, Address::Implied) => {
-                let flags = self.stack_pop()?;
-                println!("{}", flags);
-                self.status_register.bits = flags;
-                let addr = self.stack_pop_double()?;
-                self.pc = addr;
-                self.counter += 6;
-                Ok(format!("Set pc to {:x} from interrupt", self.pc))
-            }
-            /* SEC, SED, SEI,*/
-            (Code::SEI, Address::Implied) => {
-                self.counter += 2;
-                self.pc += 1;
-                self.status_register |=  StatusFlags::I;
-                Ok(format!("Set Interrupt Disable to 1"))
-            }
-            /* CLC, CLD, CLI, CLV, */
-            (Code::CLD, Address::Implied) => {
-                self.counter += 2;
-                self.pc += 1;
-                self.status_register &= !StatusFlags::D;
-                Ok(format!("Cleared decimal flag"))
-            }
-            /* NOP, BRK */
-            (Code::BRK, Address::Implied) => {
-                if self.stack_pointer < 2 {
-                    Err(format!("Stack overflowed!"))
-                } else {
-                    self.counter += 7;
-                    let addr = self.pc;
-                    self.stack_push_double(addr)?;
-                    
-                    let irq = self.read_double(0xFFFE)?;
-                    self.pc = irq;
-                    
-                    let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                    self.stack_push(flags.bits)
-                }
-            },
-            _ => Err(format!("{:?} not implemented", instruction))
-        }
-    }*/
 }
