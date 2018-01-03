@@ -1,4 +1,4 @@
-use std::{u8, u16};
+use std::{u8, u16, fmt};
 use core::ppu::PPU;
 use core::ines::INES;
 use core::addressing::{opcode_table, Address, AddressType, SingleType, DoubleType};
@@ -79,7 +79,7 @@ pub enum Code {
     SEC, SED, SEI,
     CLC, CLD, CLI, CLV, 
     NOP, BRK,
-    ILLEGAL
+    ILL
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -99,7 +99,15 @@ pub struct CPU {
     status_register: StatusFlags,
     ram: [u8; 2048],
     ppu: PPU,
-    cartridge: INES
+    cartridge: INES,
+}
+
+impl fmt::Display for CPU {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "counter: {:04X} pc: {:04X} ", self.counter, self.pc)?;
+        write!(f, "sp: {:02X} acc: {:02X} x: {:02X} ", self.stack_pointer, self.accumulator, self.x)?;
+        write!(f, "y: {:02X} flags: {:08b}", self.y, self.status_register.bits)
+    }
 }
 
 impl CPU {
@@ -116,7 +124,7 @@ impl CPU {
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
             ppu: PPU::init(),
-            cartridge: ines
+            cartridge: ines,
         }
     }
 
@@ -144,9 +152,7 @@ impl CPU {
     pub fn step(&mut self) -> CPUResult<String> {
         let addr = self.pc;
         let opcode = self.read(addr)? as usize;
-        print!("{:X}, opcode: {:X}, ", self.pc, opcode);
         let (code, address, cycles) = self.opcode_table[opcode];
-        println!("{:?}", code);
         self.pc += 1;
         self.execute(code, address, cycles)
     }
@@ -172,11 +178,11 @@ impl CPU {
         match address as usize {
             0x0000 ... 0x1FFF => {
                 self.ram[(address % 2048) as usize] = val;
-                Ok(format!("Wrote {:X} to address {:X}", val, address))
+                Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
             0x2000 ... 0x3FFF => {
                 self.ppu.write(address, val);
-                Ok(format!("Wrote {:X} to ppu {:X}", val, address))
+                Ok(format!("Wrote {:02X} to ppu {:04X}", val, address))
             },
             0x4000 ... 0x4017 => Err(format!("APU and IO not yet implemented!")),
             0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
@@ -248,13 +254,15 @@ impl CPU {
         Ok((bytes, extra_cycles, val))
     }
 
-    fn address_read_modify_write(&mut self, a: Address,
-                                 op: &Fn(&mut CPU, u8) -> u8) -> CPUResult<(u16, u8)> {
+    fn address_read_modify_write(&mut self, a: Address, min_cycles: u16, msg: String,
+                                 op: &Fn(&mut CPU, u8) -> u8) -> CPUResult<String> {
         use core::addressing::Address::*;
         use core::addressing::AddressType::*;
         use core::addressing::SingleType::*;
         use core::addressing::DoubleType::*;
-        
+
+        self.counter += min_cycles;
+
         match a {
             Invalid | Implied |
             Specified(DoubleByte(Indirect)) |
@@ -264,21 +272,26 @@ impl CPU {
                 let val = self.accumulator;
                 let res = op(self, val);
                 self.accumulator = res;
-                Ok((0, val))
+                self.set_zn(res);
+                Ok(format!("{} Acc for res {:02X}", msg, res))
             },
             Specified(SingleByte(s)) => {
                 let (_, addr) = self.decode_single_byte(s)?;
                 let val = self.read(addr)?;
                 let res = op(self, val);
                 self.write(addr, res)?;
-                Ok((1, val))
+                self.pc += 1;
+                self.set_zn(res);
+                Ok(format!("{} {:04X} for res {:02X}", msg, addr, res))
             },
             Specified(DoubleByte(d)) => {
                 let (_, addr) = self.decode_double_byte(d)?;
                 let val = self.read(addr)?;
                 let res = op(self, val);
                 self.write(addr, val)?;
-                Ok((2, val))
+                self.pc += 2;
+                self.set_zn(res);
+                Ok(format!("{} {:04X} for res {}", msg, addr, res))
             }
         }
     }
@@ -335,23 +348,23 @@ impl CPU {
             DEC => self.dec(a, min_cycles),
             DEX | DEY => self.dec_reg(min_cycles, c),
             
-            ASL => self.shift_rotate(a, min_cycles, &|cpu, x| {
+            ASL => self.shift_rotate(a, min_cycles, "Shifted left", &|cpu, x| {
                 let carry = x & 0x01;
                 cpu.status_register.bits |= carry;
                 x >> 1
             }),
-            LSR => self.shift_rotate(a, min_cycles, &|cpu, x| {
+            LSR => self.shift_rotate(a, min_cycles, "Shifted right", &|cpu, x| {
                 let carry = (x & 0b1000_0000) >> 7;
                 cpu.status_register.bits |= carry;
                 x << 1
             }),
-            ROL => self.shift_rotate(a, min_cycles, &|cpu, x| {
+            ROL => self.shift_rotate(a, min_cycles, "Rotated left", &|cpu, x| {
                 let old_carry = (cpu.status_register & StatusFlags::C).bits;
                 let next_carry = x & 0b1000_0000;
                 cpu.status_register.bits |= next_carry >> 7;
                 (x << 1) + old_carry
             }),
-            ROR => self.shift_rotate(a, min_cycles, &|cpu, x| {
+            ROR => self.shift_rotate(a, min_cycles, "Rotated right", &|cpu, x| {
                 let old_carry = (cpu.status_register & StatusFlags::C).bits;
                 let next_carry = x & 0x01;
                 cpu.status_register.bits |= next_carry;
@@ -365,15 +378,15 @@ impl CPU {
                 let msg = match c {
                     AND => {
                         self.accumulator &= val;
-                        format!("Logical AND result: {:X}", val)
+                        format!("Logical AND result: {:02X}", val)
                     },
                     EOR => {
                         self.accumulator ^= val;
-                        format!("Logical EOR result: {:X}", val)
+                        format!("Logical EOR result: {:02X}", val)
                     },
                     ORA | _ => {
                         self.accumulator |= val;
-                        format!("Logical ORA result: {:X}", val)
+                        format!("Logical ORA result: {:02X}", val)
                     }
                 };
                 let res = self.accumulator;
@@ -391,55 +404,63 @@ impl CPU {
                     self.y
                 };
                 if lhs < val {
-                    self.status_register &= !StatusFlags::C;
-                    self.status_register |= StatusFlags::N;
-                    self.status_register &= !StatusFlags::Z;
+                    self.clear_flag_op(StatusFlags::C);
+                    self.set_flag_op(StatusFlags::N);
+                    self.clear_flag_op(StatusFlags::Z);
                 } else if lhs == val {
-                    self.status_register |= StatusFlags::C;
-                    self.status_register &= !StatusFlags::N;
-                    self.status_register |= StatusFlags::Z;
+                    self.set_flag_op(StatusFlags::C);
+                    self.clear_flag_op(StatusFlags::N);
+                    self.set_flag_op(StatusFlags::Z);
                 } else {
-                    self.status_register |= StatusFlags::C;
-                    self.status_register &= !StatusFlags::N;
-                    self.status_register &= !StatusFlags::Z;
+                    self.set_flag_op(StatusFlags::C);
+                    self.clear_flag_op(StatusFlags::N);
+                    self.clear_flag_op(StatusFlags::Z);
                 }
                 self.counter += min_cycles + extra_cycles;
                 self.pc += bytes;
-                Ok(format!("Compared {} to {}", lhs, val))
+                Ok(format!("Compared {} to {} for result {:?}",
+                           lhs, val, self.status_register))
             },
             
-            /*BIT => {},*/
+            BIT => {
+                let (bytes, extra_cycles, val) = self.address_read(a)?;
+                self.status_register.bits |= (self.accumulator & val) & 0b1100_0000;
+                self.counter += min_cycles + extra_cycles;
+                self.pc += bytes;
+                Ok(format!("Set V and C {}", self.status_register.bits & 0b1100_0000))
+            },
+            
             BCC => {
                 let cond = self.status_register.get_flags_status(StatusFlags::C);
-                self.branch(a, min_cycles, !cond)
+                self.branch(a, min_cycles, "BCC", !cond)
             },
             BCS => {
                 let cond = self.status_register.get_flags_status(StatusFlags::C);
-                self.branch(a, min_cycles, cond)
+                self.branch(a, min_cycles, "BCS", cond)
             },
             BEQ => {
                 let cond = self.status_register.get_flags_status(StatusFlags::Z);
-                self.branch(a, min_cycles, cond)
+                self.branch(a, min_cycles, "BEQ", cond)
             },
             BNE => {
                 let cond = self.status_register.get_flags_status(StatusFlags::Z);
-                self.branch(a, min_cycles, !cond)
+                self.branch(a, min_cycles, "BNE", !cond)
             },
             BMI => {
                 let cond = self.status_register.get_flags_status(StatusFlags::N);
-                self.branch(a, min_cycles, cond)
+                self.branch(a, min_cycles, "BMI", cond)
             },
             BPL => {
                 let cond = self.status_register.get_flags_status(StatusFlags::N);
-                self.branch(a, min_cycles, !cond)
+                self.branch(a, min_cycles, "BPL", !cond)
             },
             BVC => {
                 let cond = self.status_register.get_flags_status(StatusFlags::V);
-                self.branch(a, min_cycles, !cond)
+                self.branch(a, min_cycles, "BVC", !cond)
             },
             BVS => {
                 let cond = self.status_register.get_flags_status(StatusFlags::V);
-                self.branch(a, min_cycles, cond)
+                self.branch(a, min_cycles, "BVS", cond)
             },
             /*TAX => {
             },
@@ -483,14 +504,14 @@ impl CPU {
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
                         self.pc = addr;
-                        Ok(format!("Set pc to {:X}", addr))
+                        Ok(format!("Set pc to {:04X}", addr))
                     },
                     Specified(DoubleByte(Absolute)) => {
                         let pc = self.pc;
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
                         self.pc = addr;
-                        Ok(format!("Set pc to {:X}", addr))
+                        Ok(format!("Set pc to {:04X}", addr))
                     }
                     _ => Err(format!("JMP doesn't use {:?}", a))
                 }
@@ -504,7 +525,7 @@ impl CPU {
                         let ret_addr = self.pc + 2 - 1;
                         self.stack_push_double(ret_addr)?;
                         self.pc = addr;
-                        Ok(format!("Pushed {:X} onto stack and set pc to {:X}.", ret_addr, addr))
+                        Ok(format!("Pushed {:04X} onto stack and set pc to {:04X}.", ret_addr, addr))
                     },
                     _ => Err(format!("JSR doesn't use {:?}", a))
                 }
@@ -513,7 +534,7 @@ impl CPU {
                 let addr = self.stack_pop_double()?;
                 self.pc = addr;
                 self.counter += min_cycles;
-                Ok(format!("Returned pc to {:X}", self.pc)) 
+                Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
             RTI => {
                 let flags = self.stack_pop()?;
@@ -521,7 +542,7 @@ impl CPU {
                 let addr = self.stack_pop_double()?;
                 self.pc = addr + 1;
                 self.counter += min_cycles;
-                Ok(format!("Set pc to {:X} from interrupt", self.pc))
+                Ok(format!("Set pc to {:04X} from interrupt", self.pc))
             },
             SEC => self.set_flag(min_cycles, StatusFlags::C),
             SED => self.set_flag(min_cycles, StatusFlags::D),
@@ -548,8 +569,8 @@ impl CPU {
                 }
 
             },
-            ILLEGAL | _ => Err(format!("Illegal instruction {:?}!", c))
-        }        
+            ILL | _ => Err(format!("Illegal instruction {:?}!", c))
+        }     
     }
         
     fn set_zn(&mut self, val: u8) {
@@ -639,12 +660,20 @@ impl CPU {
         self.pc += bytes;
         self.counter += min_cycles + extra_cycles;
         match c {
-            LDA => self.accumulator = val,
-            LDX => self.x = val,
-            LDY => self.y = val,
+            LDA => {
+                self.accumulator = val;
+                Ok(format!("Loaded {:08b} into A", val))
+            },
+            LDX => {
+                self.x = val;
+                Ok(format!("Loaded {:08b} into X", val))
+            },                
+            LDY => {
+                self.y = val;
+                Ok(format!("Loaded {:08b} into A", val))
+            },
             _ => panic!(format!("Expected LDx, found {:?}", c))
         }
-        Ok(format!("Loaded {:b} into a register", val))
     }
 
     fn store(&mut self, a: Address, min_cycles: u16, val: u8) -> CPUResult<String> {
@@ -652,15 +681,12 @@ impl CPU {
         self.write(addr, val)?;
         self.pc += bytes;
         self.counter += min_cycles;
-        Ok(format!("Stored {} into {:?}", val, addr))
+        Ok(format!("Stored {:08b} into {:04X}", val, addr))
     }
 
     fn inc(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
-        let (bytes, val) = self.address_read_modify_write(a, &|cpu, x| {x.wrapping_add(1)})?;
-        self.pc += bytes;
-        self.counter += min_cycles;
-        self.set_zn(val);
-        Ok(format!("Incremented {:?}", a))
+        let msg = format!("Incremented ");
+        self.address_read_modify_write(a, min_cycles, msg, &|cpu, x| {x.wrapping_add(1)})
     }
 
     fn inc_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
@@ -670,27 +696,24 @@ impl CPU {
                 self.counter += min_cycles;
                 self.set_zn(val);
                 self.x = val;
-                Ok(format!("Incremented x by one for res {}", val))
+                Ok(format!("Incremented x by one for res {:02X}", val))
             },
             INY => {
                 let val = self.y.wrapping_add(1);
                 self.counter += min_cycles;
                 self.set_zn(val);
                 self.y = val;
-                Ok(format!("Incremented x by one for res {}", val))
+                Ok(format!("Incremented y by one for res {:02X}", val))
             },
             _ => panic!(format!("Expected INX/INY, found {:?}", c))
         }
     }
 
-    fn dec(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
-        let (bytes, val) = self.address_read_modify_write(a, &|cpu, x| {
+   fn dec(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
+       let msg = format!("Decremented ");
+       self.address_read_modify_write(a, min_cycles, msg, &|cpu, x| {
             x.wrapping_sub(1)
-        })?;
-        self.set_zn(val);
-        self.pc += bytes;
-        self.counter += min_cycles;
-        Ok(format!("Decremented {:?}", a))
+        })
     }
     
     fn dec_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
@@ -741,13 +764,9 @@ impl CPU {
                    rhs, res, next_carry, overflow))
     }
 
-    fn shift_rotate(&mut self, a: Address, min_cycles: u16,
+    fn shift_rotate(&mut self, a: Address, min_cycles: u16, msg: &str,
                     op: &Fn(&mut CPU, u8) -> u8) -> CPUResult<String> {
-        let (bytes, val) = self.address_read_modify_write(a, op)?;
-        self.set_zn(val);
-        self.pc += bytes;
-        self.counter += min_cycles;
-        Ok(format!("Shifted {:?} right for result {:X}", a, val))
+        self.address_read_modify_write(a, min_cycles, msg.to_string(), op)
     }
 
     fn set_flag_op(&mut self, flag: StatusFlags) {
@@ -770,23 +789,23 @@ impl CPU {
         Ok(format!("Cleared {:?}", flag))
     }
 
-    fn branch(&mut self, a: Address, min_cycles: u16, cond: bool) -> CPUResult<String> {
+    fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, cond: bool) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a)?;
         if cond {
             self.counter += min_cycles + 1 + 2 * extra_cycles;
-            println!("Relative operand bytes: {}", bytes);
             self.pc += bytes;
             if val > 127 {
-                self.pc -= (!val) as u16;
-                Ok(format!("Branched by -{}", !val as u16))
+                let addr = (-((val as i8) as i16) as u16);
+                self.pc -= addr;
+                Ok(format!("{}: Branched by -{})", msg, addr))
             } else {
                 self.pc += val as u16;
-                Ok(format!("Branched by {}", val))
+                Ok(format!("{}: Branched by {}", msg, val))
             }
         } else {
             self.counter += min_cycles;
             self.pc += bytes;
-            Ok(format!("No branch."))
+            Ok(format!("{}: No branch.", msg))
         }
     }
 }

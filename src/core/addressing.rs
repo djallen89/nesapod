@@ -37,7 +37,7 @@ pub fn opcode_table() -> Vec<(Code, Address, u16)> {
     use core::cpu::Code::*;
     let acc = Address::Acc;
     let imp = Address::Implied;
-    let ill = (ILLEGAL, Address::Invalid, 0);
+    let ill = (ILL, Address::Invalid, 0);
     let ixi = Address::Specified(AddressType::SingleByte(SingleType::Indirect_X));
     let iyi = Address::Specified(AddressType::SingleByte(SingleType::Indirect_Y));
     let rel = Address::Specified(AddressType::SingleByte(SingleType::Relative));

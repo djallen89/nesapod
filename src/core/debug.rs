@@ -26,7 +26,6 @@ impl Debug {
         let mut out = String::new();
         for msg in self.messages.iter().rev() {
             out.push_str(msg);
-            out.push_str("\n");
         }
         out
     }
@@ -39,14 +38,24 @@ impl Debug {
                 Err(f) => panic!(f)
             };
         }
-        self.messages.push_front(msg.to_string());
+        self.messages.push_front(format!("{}", msg));
+    }
+
+    pub fn input_ln(&mut self, msg: &str) {
+        while self.messages.len() >= self.length as usize {
+            let back = self.messages.pop_back().unwrap();
+            match self.write(&back) {
+                Ok(_) => {},
+                Err(f) => panic!(f)
+            };
+        }
+        self.messages.push_front(format!("{}\n", msg));
     }
 
     pub fn write(&mut self, msg: &str) -> Result<(), IOError> {
         if self.file.is_some() {
             let mut f = self.file();
             f.write_all(msg.as_bytes())?;
-            f.write_all(b"\n")?;
             f.sync_data()?;
         }
         Ok(())
@@ -58,7 +67,6 @@ impl Debug {
 
             for msg in self.messages.drain(..).rev() {
                 file.write_all(msg.as_bytes())?;
-                file.write_all(b"\n")?;
             }
 
             file.sync_all()?;
