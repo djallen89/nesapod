@@ -1,6 +1,7 @@
 #![crate_type= "bin"]
 
 extern crate getopts;
+extern crate pancurses;
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate bitflags;
 

@@ -3,6 +3,7 @@ use conrod::{self, widget, Colorable, Positionable, Widget};
 use conrod::backend::glium::glium::{self, Surface};
 use conrod::theme::Theme;
 use conrod::color;
+use pancurses;
 use core;
 use core::ines::INES;
 use core::cpu::CPU;
@@ -123,12 +124,19 @@ pub fn main(logname: Option<String>, rom: Option<String>) {
                                 &VirtualKeyCode::D => 13,
                                 &VirtualKeyCode::E => 14,
                                 &VirtualKeyCode::F => 15,
+                                &VirtualKeyCode::S => 64,
+                                &VirtualKeyCode::Z => 256,
+                                &VirtualKeyCode::L => 1 << 12,
                                 _ => 0
                             };
                             while steps > 0 {
                                 match emulator.step() {
                                     Ok(x)  => debugger.input(&format!("    {}\n{}", x, emulator)),
-                                    Err(f) => debugger.input(&format!("    {}\n{}", f, emulator))
+                                    Err(f) => {
+                                        pancurses::beep();
+                                        debugger.input(&format!(" ERROR: {}\n{}", f, emulator));
+                                        break
+                                    }
                                 }
                                 steps -= 1;
                             }

@@ -1,5 +1,4 @@
 use std::fmt;
-use core::cpu::CPUResult;
 
 pub mod sxrom {
     use core::cpu::CPUResult;

@@ -11,6 +11,7 @@ pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
 pub const RESET_VECTOR: u16 = 0xFFFC;
+pub const IRQ_VECTOR: u16 = 0xFFFE;
 pub const STACK_REGION: u16 = 0x01A0;
 
 pub type CPUResult<T> = Result<T, String>;
@@ -105,8 +106,9 @@ pub struct CPU {
 impl fmt::Display for CPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "counter: {:04X} pc: {:04X} ", self.counter, self.pc)?;
-        write!(f, "sp: {:02X} acc: {:02X} x: {:02X} ", self.stack_pointer, self.accumulator, self.x)?;
-        write!(f, "y: {:02X} flags: {:08b}", self.y, self.status_register.bits)
+        write!(f, "sp: {:02X} acc: {:02X} x: {:02X} ",
+               self.stack_pointer, self.accumulator, self.x)?;
+        write!(f, "y: {:02X} flags: {:?}", self.y, self.status_register)
     }
 }
 
@@ -138,7 +140,9 @@ impl CPU {
     }
 
     pub fn init(&mut self) -> CPUResult<String> {
-        self.execute(Code::JMP, Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)), 5)
+        self.execute(Code::JMP,
+                     Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)),
+                     5, 0x6C)
     }
 
     pub fn get_pc(&self) -> u16 {
@@ -150,13 +154,19 @@ impl CPU {
     }
 
     pub fn step(&mut self) -> CPUResult<String> {
+        if self.interupt() {
+            self.handle_interrupt()?;
+        }
         let addr = self.pc;
-        let opcode = self.read(addr)? as usize;
-        let (code, address, cycles) = self.opcode_table[opcode];
+        let opcode = self.read(addr)?;
+        let (code, address, cycles) = self.opcode_table[opcode as usize];
+        if u16::MAX - self.counter < 7 {
+            self.counter = 0; //temporary hack til timing is implemented
+        }
         self.pc += 1;
-        self.execute(code, address, cycles)
+        self.execute(code, address, cycles, opcode)
     }
-    
+
     pub fn read(&mut self, address: u16) -> CPUResult<u8> {
         match address {
             0x0000 ... 0x1FFF => Ok(self.ram[(address % 2048) as usize]),
@@ -322,7 +332,7 @@ impl CPU {
         }
     }
 
-    fn execute(&mut self, c: Code, a: Address, min_cycles: u16) -> CPUResult<String> {
+    fn execute(&mut self, c: Code, a: Address, min_cycles: u16, o: u8) -> CPUResult<String> {
         use self::Code::*;
         match c {
             LDA | LDX | LDY => self.load(a, min_cycles, c),
@@ -462,16 +472,42 @@ impl CPU {
                 let cond = self.status_register.get_flags_status(StatusFlags::V);
                 self.branch(a, min_cycles, "BVS", cond)
             },
-            /*TAX => {
+            TAX => {
+                let val = self.accumulator;
+                self.x = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+                Ok(format!("Transferred A to X"))
             },
             TXA => {
+                let val = self.x;
+                self.accumulator = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+                Ok(format!("Transferred X to A"))
             },
             TAY => {
+                let val = self.accumulator;
+                self.y = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+                Ok(format!("Transferred A to Y"))
+
             },
             TYA => {
+                let val = self.y;
+                self.accumulator = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+                Ok(format!("Transferred Y to A"))
+
             },
             TSX => {
-            },*/
+                let val = self.stack_pop()?;
+                self.x = val;
+                self.set_zn(val);
+                Ok(format!("Popped from the stack to X"))
+            },
             TXS => {
                 let val = self.x;
                 self.stack_push(val)?;
@@ -495,8 +531,12 @@ impl CPU {
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)
             },
-            /*PLP => {
-            },*/
+            PLP => {
+                self.counter += min_cycles;
+                let flags = self.stack_pop()?;
+                self.status_register.bits |= flags;
+                Ok(format!("Pulled processor flags from stack!"))
+            },
             JMP => {
                 match a {
                     Specified(DoubleByte(Indirect)) => {
@@ -532,7 +572,7 @@ impl CPU {
             },
             RTS => {
                 let addr = self.stack_pop_double()?;
-                self.pc = addr;
+                self.pc = addr + 1;
                 self.counter += min_cycles;
                 Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
@@ -540,7 +580,7 @@ impl CPU {
                 let flags = self.stack_pop()?;
                 self.status_register.bits = flags;
                 let addr = self.stack_pop_double()?;
-                self.pc = addr + 1;
+                self.pc = addr;
                 self.counter += min_cycles;
                 Ok(format!("Set pc to {:04X} from interrupt", self.pc))
             },
@@ -551,25 +591,22 @@ impl CPU {
             CLD => self.clear_flag(min_cycles, StatusFlags::D),
             CLI => self.clear_flag(min_cycles, StatusFlags::I),
             CLV => self.clear_flag(min_cycles, StatusFlags::V),
-            /*NOP => {
-            },*/
-            BRK => {
-                if self.stack_pointer < 2 {
-                    Err(format!("Stack overflowed!"))
-                } else {
-                    self.counter += 7;
-                    let addr = self.pc;
-                    self.stack_push_double(addr)?;
-                    
-                    let irq = self.read_two_bytes(0xFFFE)?;
-                    self.pc = irq;
-                    
-                    let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                    self.stack_push(flags.bits)
-                }
-
+            NOP => {
+                self.counter += min_cycles;
+                Ok(format!("NOP"))
             },
-            ILL | _ => Err(format!("Illegal instruction {:?}!", c))
+            BRK => {
+                self.counter += 7;
+                let addr = self.pc;
+                self.stack_push_double(addr)?;
+                
+                let irq = self.read_two_bytes(IRQ_VECTOR)?;
+                self.pc = irq;
+                    
+                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                self.stack_push(flags.bits)
+            },
+            ILL => Err(format!("Illegal instruction {:02X}!", o))
         }     
     }
         
@@ -795,7 +832,7 @@ impl CPU {
             self.counter += min_cycles + 1 + 2 * extra_cycles;
             self.pc += bytes;
             if val > 127 {
-                let addr = (-((val as i8) as i16) as u16);
+                let addr = -((val as i8) as i16) as u16;
                 self.pc -= addr;
                 Ok(format!("{}: Branched by -{})", msg, addr))
             } else {
