@@ -5,8 +5,6 @@ use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::str;
 use core::ines::mappers::Mapper;
-use core::ines::mappers::Mapper::*;
-use core::ines::mappers::*;
 use core::cpu::CPUResult;
 
 mod mappers; 
@@ -56,7 +54,6 @@ pub struct Header {
     flags_9: u8,
     flags_10: u8
 }
-
 
 /// prg_rom is number of 16384 byte tables, chr_rom/chr_ram is number of
 impl Header {
@@ -152,20 +149,17 @@ impl Header {
         self.flags_10 & Flags10::BUS_CONFLICTS.bits == 1
     }
 
-    pub fn mirroring(&self) -> Mirroring {
-        match (self.flags_6 & Flags6::MIRROR.bits, (self.flags_6 & Flags6::FOURSCREEN.bits) >> 3) {
-            (0, 0) => Mirroring::Horizontal,
-            (1, 0) => Mirroring::Vertical,
-            (_, _) => Mirroring::FourScreenVRAM,
-        }
+    pub fn mirroring(&self) -> u8 {
+        ((self.flags_6 & Flags6::MIRROR.bits) << 1) +
+            ((self.flags_6 & Flags6::FOURSCREEN.bits) >> 3)
     }
 
-    pub fn mapper(&self,) -> Mapper {
-        let mirroring 
+    pub fn mapper(&self) -> Mapper {
+        let mirroring = self.mirroring();
         let lower = self.flags_6 & Flags6::LOWERMAPPER.bits >> 4;
         let upper = self.flags_7 & Flags7::UPPERMAPPER.bits;
         let id = upper + lower;
-        Mapper::new(id)
+        Mapper::new(id, mirroring)
     }
 }
 
@@ -174,7 +168,6 @@ pub struct INES {
     _bus_conflicts: bool,
     prg_rom_size: usize,
     chr_mem_size: usize,
-    _mirroring: Mirroring,
     mapper: Mapper,
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
@@ -220,7 +213,6 @@ impl INES {
             _bus_conflicts: header.bus_conflicts(),
             prg_rom_size: header.prg_rom_size(),
             chr_mem_size: chr_mem.len(),
-            _mirroring: header.mirroring(),
             mapper: header.mapper(),
             prg_rom: prg_rom,
             prg_ram: prg_ram,
@@ -234,9 +226,9 @@ impl INES {
 
     pub fn read(&self, idx: u16) -> CPUResult<u8> {
         match self.mapper {
-            NROM => {
+            Mapper::NROM => {
                 match idx {
-                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x0000 ... 0x5FFF => Err(format!("{:X} not on cartridge", idx)),
                     0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
                     0x8000 ... 0xFFFF => {
                         Ok(self.prg_rom[((idx - 0x8000) as usize) % self.prg_rom_size])
@@ -244,9 +236,9 @@ impl INES {
                     _ => panic!("This should not happen with u16")
                 }
             },
-            SXROM(SxRom::MMC1) => {
+            Mapper::SXROM(ref sxrom) => {
                 match idx {
-                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x0000 ... 0x5FFF => Err(format!("{:X} not on cartridge", idx)),
                     0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
                     0x8000 ... 0xFFFF => {
                         Ok(self.prg_rom[((idx - 0x8000) as usize) % self.prg_rom_size])
@@ -260,25 +252,25 @@ impl INES {
     
     pub fn write(&mut self, idx: u16, val: u8) -> CPUResult<String> {
         match self.mapper {
-            NROM => {
+            Mapper::NROM => {
                 match idx {
-                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x0000 ... 0x5FFF => Err(format!("{:X} not on cartridge", idx)),
                     0x6000 ... 0x7FFF => {
                         self.prg_ram[(idx - 0x6000) as usize] = val;
-                        Ok(format!("Wrote {:x} to address {:x}", val, idx))
+                        Ok(format!("Wrote {:X} to address {:X}", val, idx))
                     },
-                    0x7FFF ... 0xFFFF => Err(format!("Can't write to {:x}!", idx)),
+                    0x7FFF ... 0xFFFF => Err(format!("Can't write to {:X}!", idx)),
                     _ => panic!("This should not happen with u16")
                 }
             },
-            SXROM(SxRom::MMC1) => {
+            Mapper::SXROM(ref mut sxrom) => {
                 match idx {
-                    0x0000 ... 0x5FFF => Err(format!("{:x} not on cartridge", idx)),
+                    0x0000 ... 0x5FFF => Err(format!("{:X} not on cartridge", idx)),
                     0x6000 ... 0x7FFF => {
                         self.prg_ram[(idx - 0x6000) as usize] = val;
-                        Ok(format!("Wrote {:x} to address {:x}", val, idx))
+                        Ok(format!("Wrote {:X} to address {:X}", val, idx))
                     },
-                    0x7FFF ... 0xFFFF => Err(format!("Can't write {} to {:x}!", val, idx)),
+                    0x8000 ... 0xFFFF => sxrom.write(idx, val),
                     _ => panic!("This should not happen with u16")
                 }
             },

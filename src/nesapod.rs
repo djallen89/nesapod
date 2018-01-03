@@ -19,7 +19,7 @@ pub fn main(logname: Option<String>, rom: Option<String>) {
     let ines = match INES::new(&romname) {
         Ok(r) => {
             debugger.input(&format!("Successfully loaded ROM of size {}", r.size()));
-            debugger.input(&format!("Mapper Id: {:?}", r.mapper()));
+            debugger.input(&format!("Mapper Id: {}", r.mapper()));
             r
         },
         Err(f) => {
@@ -74,12 +74,12 @@ pub fn main(logname: Option<String>, rom: Option<String>) {
         
         match emulator.step() {
             Ok(x) => {
-                let msg = format!("{:x}: {} ; ({} cycles)", emulator.get_pc(), x,
+                let msg = format!("{:X}: {} ; ({} cycles)", emulator.get_pc(), x,
                                   emulator.get_counter());
                 debugger.input(&msg);
             },
             Err(f) => {
-                debugger.input(&format!("{:x}: {}", emulator.get_pc(), f));
+                debugger.input(&format!("{:X}: {}", emulator.get_pc(), f));
             }
         }
 

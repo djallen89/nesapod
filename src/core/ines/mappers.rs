@@ -1,41 +1,156 @@
-module sxrom {
+use std::fmt;
+use core::cpu::CPUResult;
+
+pub mod sxrom {
+    use core::cpu::CPUResult;
+    use std::fmt;
+
+    #[derive(Clone, Copy, Debug)]
     pub enum Mirroring {
-        OneScreenLower = 0,
-        OneScreenUpper = 1,
-        Vertical = 2,
-        Horizontal = 3
+        OneScreenLower,
+        OneScreenUpper,
+        Vertical,
+        Horizontal
     }
 
-    pub enum PrgRomBank {
+    impl Mirroring {
+        pub fn set(x: u8) -> Mirroring {
+            match x {
+                0 => Mirroring::OneScreenLower,
+                1 => Mirroring::OneScreenUpper,
+                2 => Mirroring::Vertical,
+                3 => Mirroring::Horizontal,
+                _ => panic!(format!("Invalid mirroring {}!", x))
+            }
+        }
+    }
+
+    #[derive(Clone, Copy, Debug)]
+    pub enum PrgBankMode {
         Ignore,
         First,
         Last
     }
 
-    pub enum ChrRomBank {
-        Eight = 0,
-        TwoByFour = 1,
+    impl PrgBankMode {
+        pub fn set(id: u8) -> PrgBankMode {
+            match id {
+                0 | 1 => PrgBankMode::Ignore,
+                2 => PrgBankMode::First,
+                3 => PrgBankMode::Last,
+                _ => panic!(format!("Invalid id {}!", id))
+            }
+        }
     }
-}
 
-#[derive(Clone, Copy, Debug)]
-pub struct SxRom {
-    id: u8,
-    control: MMC1Ctrl,
-    chr_bank_0: u8,
-    chr_bank_1: u8,
-    prg_bank_enable: bool
-    prg_bank: u8,
-}
+    #[derive(Clone, Copy, Debug)]
+    pub struct SxRom {
+        id: u8,
+        mirroring: Mirroring,
+        prg_bank_mode: PrgBankMode,
+        prg_ram_enable: bool,
+        chr_switch_4: bool,
+        prg_bank: u8,
+        chr_bank_0: u8,
+        chr_bank_1: u8,
+        shift_register: u8,
+    }
+        
+    impl SxRom {
+        pub fn new(id: u8, mirroring: u8, enable: bool) -> SxRom {
+            SxRom {
+                id: id,
+                mirroring: Mirroring::set(mirroring),
+                prg_bank_mode: PrgBankMode::set(0),
+                prg_ram_enable: enable,
+                chr_switch_4: false,
+                prg_bank: 0,
+                chr_bank_0: 0,
+                chr_bank_1: 0,
+                shift_register: 0,
+            }
+        }
 
-impl SxRom {
-    pub fn new(id: u8) -> SxRom {
-        if id == 1 {
-            SxRom::MMC1
-        } else if id == 105 {
-            SxRom::NO105
-        } else {
-            SxRom::NO155
+        pub fn write(&mut self, addr: u16, val: u8) -> CPUResult<String> {
+            let len = self.sr_len();
+            if len < 4 {
+                self.shift_register(val)
+            } else if len == 5 {
+                self.shift_register(val)?;
+                self.set_register(addr)
+            } else {
+                panic!(format!("Impossible shift register length {}", len))
+            }
+        }
+        
+        fn sr_len(&self) -> usize {
+            let mut bit = 7;
+            while self.shift_register >> bit == 0 && bit > 0 {
+                bit -= 1;
+            }
+            bit + 1
+        }
+
+        fn shift_register(&mut self, val: u8) -> CPUResult<String> {
+            if val > 127 {
+                self.shift_register = 0;
+                Ok(format!("Reset SxROM shift register"))
+            } else {
+                self.shift_register <<= 1;
+                self.shift_register += val & 0x01;
+                Ok(format!("Shifted SxROM shift register; {:b}", self.shift_register))
+            }
+        }
+
+        fn set_register(&mut self, addr: u16) -> CPUResult<String> {
+            match addr {
+                0x8000 ... 0x9FFF => {
+                    let mirroring = self.shift_register & 0b0000_0011;
+                    self.mirroring = Mirroring::set(mirroring);
+                    let prg_mode = (self.shift_register & 0b0000_1100) >> 2;
+                    self.prg_bank_mode = PrgBankMode::set(prg_mode);
+                    let chr_mode = self.shift_register >> 4 == 1;
+                    self.chr_switch_4 = chr_mode;
+                    self.shift_register = 0;
+                    Ok(format!("Set control register to {:?} {:?} 4 kB switching: {}",
+                               self.mirroring, self.prg_bank_mode, self.chr_switch_4))
+                },
+                0xA000 ... 0xBFFF => {
+                    self.chr_bank_0 = self.shift_register;
+                    self.shift_register = 0;
+                    Ok(format!("Set chr bank 0 to {:X}", self.chr_bank_0))
+                },
+                0xC000 ... 0xDFFF => {
+                    self.chr_bank_1 = self.shift_register;
+                    self.shift_register = 0;
+                    Ok(format!("Set chr bank 1 to {:X}", self.chr_bank_0))
+                },
+                0xE000 ... 0xFFFF | _ => {
+                    if self.id == 155 {
+                        self.prg_bank = self.shift_register & 0b0000_1111;
+                        self.shift_register = 0;
+                        Ok(format!("Dind't change prg ram chip enable; 155"))
+                    } else {
+                        let enable = self.shift_register >> 5 == 1;
+                        self.prg_ram_enable = enable;
+                        self.prg_bank = self.shift_register & 0b0000_1111;
+                        self.shift_register = 0;
+                        Ok(format!("Set prg bank to: ram enabled {}, rom bank: {}",
+                                   self.prg_ram_enable, self.prg_bank))
+                    }
+                }
+            }
+        }
+    }
+
+    impl fmt::Display for SxRom {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            writeln!(f, "id: {}, mirroring: {:?}",
+                   self.id, self.mirroring)?;
+            writeln!(f, "prg bank mode: {:?}, prg ram enabled: {}, prg_bank: {}",
+                   self.prg_bank_mode, self.prg_ram_enable, self.prg_bank)?;
+            write!(f, "chr switch 4: {}, chr bank 0: {}, chr bank 1: {}",
+                   self.chr_switch_4, self.chr_bank_0, self.chr_bank_1)
         }
     }
 }
@@ -166,7 +281,7 @@ impl Vrc {
 #[derive(Clone, Copy, Debug)]
 pub enum Mapper {
     NROM,
-    SXROM(SxRom),
+    SXROM(sxrom::SxRom),
     UXROM(UxRom),
     CNROM(CnRom),
     TXROM(TxRom),
@@ -194,10 +309,10 @@ pub enum Mapper {
 }
 
 impl Mapper {
-    pub fn new(id: u8) -> Mapper {
+    pub fn new(id: u8, mirroring: u8) -> Mapper {
         match id {
             0 => Mapper::NROM,
-            001 | 105 | 155 => Mapper::SXROM(SxRom::new(id)),
+            001 | 105 | 155 => Mapper::SXROM(sxrom::SxRom::new(id, mirroring, true)),
             002 | 094 | 180 => Mapper::UXROM(UxRom::new(id)),
             003 | 185 => Mapper::CNROM(CnRom::new(id)),
             004 | 118 | 119 => Mapper::TXROM(TxRom::new(id)),
@@ -222,6 +337,18 @@ impl Mapper {
             206 => Mapper::DXROM,
             210 => Mapper::NO210,
             x => Mapper::NOTSUPPORTED(x)
+        }
+    }
+}
+
+
+impl fmt::Display for Mapper {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            &Mapper::SXROM(ref sxrom) => {
+                write!(f, "{}", sxrom)
+            },
+            x => write!(f, "{:?}", x)
         }
     }
 }
