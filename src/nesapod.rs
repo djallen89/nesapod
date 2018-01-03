@@ -8,15 +8,16 @@ use core;
 use core::ines::INES;
 use core::cpu::CPU;
 
-pub fn main(logname: Option<String>, rom: Option<String>) {
+pub fn main(logging: bool, rom: Option<String>) {
     const WIDTH: u32 = 1200;
     const HEIGHT: u32 = 900;
 
-    let mut debugger = core::Debug::new(25, logname);
+    let mut debugger = core::Debug::new(32, logging);
     let romname = match rom {
         Some(r) => r,
-        None => format!("assets/instr_test-v5/rom_singles/01-basics.nes")
+        None => format!("assets/instr_test-v5/official_only.nes")
     };
+    
     let ines = match INES::new(&romname) {
         Ok(r) => {
             debugger.input_ln(&format!("Successfully loaded ROM of size {}", r.size()));

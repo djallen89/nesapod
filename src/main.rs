@@ -1,5 +1,6 @@
 #![crate_type= "bin"]
 
+extern crate time;
 extern crate getopts;
 extern crate pancurses;
 #[macro_use] extern crate conrod;
@@ -17,7 +18,7 @@ fn main() {
     let program = args[0].clone();
     let mut opts = Options::new();
     opts.optopt("r", "rom", "select a rom", ".nes"); 
-    opts.optopt("l", "log", "log messages to a file", "FILE");
+    opts.optflag("l", "log", "log messages to a file");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
         Ok(m) => m,
@@ -29,11 +30,7 @@ fn main() {
         return;
     }
 
-    let log = if matches.opt_present("l") {
-        matches.opt_str("l")
-    } else {
-        None
-    };
+    let log = matches.opt_present("l");
 
     let rom = if matches.opt_present("r") {
         matches.opt_str("r")

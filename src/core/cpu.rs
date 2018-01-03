@@ -1,7 +1,7 @@
 use std::{u8, u16, fmt};
 use core::ppu::PPU;
 use core::ines::INES;
-use core::addressing::{opcode_table, Address, AddressType, SingleType, DoubleType};
+use core::addressing::{OPCODE_TABLE, Address, SingleType, DoubleType};
 use core::addressing::Address::*;
 use core::addressing::AddressType::*;
 use core::addressing::SingleType::*;
@@ -32,6 +32,14 @@ bitflags! {
 impl StatusFlags {
     pub fn get_flag(&self, flag: StatusFlags) -> StatusFlags {
         *self & flag
+    }
+
+    pub fn get_flag_bit(&self, flag: StatusFlags) -> u8 {
+        if self.get_flags_status(flag) {
+            1
+        } else {
+            0
+        }
     }
     
     pub fn get_flags_status(&self, flag: StatusFlags) -> bool {
@@ -83,14 +91,7 @@ pub enum Code {
     ILL
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct Instruction {
-    mnemonic: Code,
-    address: Address
-}
-
 pub struct CPU {
-    opcode_table: Vec<(Code, Address, u16)>,
     counter: u16,
     pc: u16,
     stack_pointer: u8,
@@ -116,7 +117,6 @@ impl CPU {
     pub fn power_up(ines: INES) -> CPU {
         let pc = RESET_VECTOR;
         CPU {
-            opcode_table: opcode_table(),
             counter: 0,
             pc: pc,
             stack_pointer: POWERUP_S,
@@ -140,9 +140,7 @@ impl CPU {
     }
 
     pub fn init(&mut self) -> CPUResult<String> {
-        self.execute(Code::JMP,
-                     Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)),
-                     5, 0x6C)
+        self.execute(Code::JMP, Specified(DoubleByte(Indirect)), 5, 0x6C)
     }
 
     pub fn get_pc(&self) -> u16 {
@@ -154,12 +152,9 @@ impl CPU {
     }
 
     pub fn step(&mut self) -> CPUResult<String> {
-        if self.interupt() {
-            self.handle_interrupt()?;
-        }
         let addr = self.pc;
         let opcode = self.read(addr)?;
-        let (code, address, cycles) = self.opcode_table[opcode as usize];
+        let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
         if u16::MAX - self.counter < 7 {
             self.counter = 0; //temporary hack til timing is implemented
         }
@@ -283,7 +278,7 @@ impl CPU {
                 let res = op(self, val);
                 self.accumulator = res;
                 self.set_zn(res);
-                Ok(format!("{} Acc for res {:02X}", msg, res))
+                Ok(format!("{} Acc ({:02X}) for res {:02X}", msg, val, res))
             },
             Specified(SingleByte(s)) => {
                 let (_, addr) = self.decode_single_byte(s)?;
@@ -292,7 +287,7 @@ impl CPU {
                 self.write(addr, res)?;
                 self.pc += 1;
                 self.set_zn(res);
-                Ok(format!("{} {:04X} for res {:02X}", msg, addr, res))
+                Ok(format!("{} {:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
             },
             Specified(DoubleByte(d)) => {
                 let (_, addr) = self.decode_double_byte(d)?;
@@ -301,7 +296,7 @@ impl CPU {
                 self.write(addr, val)?;
                 self.pc += 2;
                 self.set_zn(res);
-                Ok(format!("{} {:04X} for res {}", msg, addr, res))
+                Ok(format!("{} {:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
             }
         }
     }
@@ -333,55 +328,54 @@ impl CPU {
     }
 
     fn execute(&mut self, c: Code, a: Address, min_cycles: u16, o: u8) -> CPUResult<String> {
-        use self::Code::*;
         match c {
-            LDA | LDX | LDY => self.load(a, min_cycles, c),
+            Code::LDA | Code::LDX | Code::LDY => self.load(a, min_cycles, c),
             
-            STA => {
+            Code::STA => {
                 let val = self.accumulator;
                 self.store(a, min_cycles, val)
             },
-            STX => {
+            Code::STX => {
                 let val = self.x;
                 self.store(a, min_cycles, val)
             },
-            STY => {
+            Code::STY => {
                 let val = self.y;
                 self.store(a, min_cycles, val)
             },
             
-            ADC => self.add(a, min_cycles),
-            SBC => self.sub(a, min_cycles),
+            Code::ADC => self.add(a, min_cycles),
+            Code::SBC => self.sub(a, min_cycles),
             
-            INC => self.inc(a, min_cycles),
-            INX | INY => self.inc_reg(min_cycles, c),
-            DEC => self.dec(a, min_cycles),
-            DEX | DEY => self.dec_reg(min_cycles, c),
+            Code::INC => self.inc(a, min_cycles),
+            Code::INX | Code::INY => self.inc_reg(min_cycles, c),
+            Code::DEC => self.dec(a, min_cycles),
+            Code::DEX | Code::DEY => self.dec_reg(min_cycles, c),
             
-            ASL => self.shift_rotate(a, min_cycles, "Shifted left", &|cpu, x| {
+            Code::ASL => self.shift_rotate(a, min_cycles, "Shifted left", &|cpu, x| {
                 let carry = x & 0x01;
                 cpu.status_register.bits |= carry;
                 x >> 1
             }),
-            LSR => self.shift_rotate(a, min_cycles, "Shifted right", &|cpu, x| {
+            Code::LSR => self.shift_rotate(a, min_cycles, "Shifted right", &|cpu, x| {
                 let carry = (x & 0b1000_0000) >> 7;
                 cpu.status_register.bits |= carry;
                 x << 1
             }),
-            ROL => self.shift_rotate(a, min_cycles, "Rotated left", &|cpu, x| {
-                let old_carry = (cpu.status_register & StatusFlags::C).bits;
+            Code::ROL => self.shift_rotate(a, min_cycles, "Rotated left", &|cpu, x| {
+                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
                 let next_carry = x & 0b1000_0000;
                 cpu.status_register.bits |= next_carry >> 7;
                 (x << 1) + old_carry
             }),
-            ROR => self.shift_rotate(a, min_cycles, "Rotated right", &|cpu, x| {
-                let old_carry = (cpu.status_register & StatusFlags::C).bits;
+            Code::ROR => self.shift_rotate(a, min_cycles, "Rotated right", &|cpu, x| {
+                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
                 let next_carry = x & 0x01;
                 cpu.status_register.bits |= next_carry;
                 (x >> 1) + old_carry 
             }),
             
-            c @ AND | c @ ORA | c @ EOR => {
+            c @ Code::AND | c @ Code::ORA | c @ Code::EOR => {
                 let (bytes, extra_cycles, val) = self.address_read(a)?;
                 self.pc += bytes;
                 self.counter += min_cycles + extra_cycles;
@@ -394,7 +388,7 @@ impl CPU {
                         self.accumulator ^= val;
                         format!("Logical EOR result: {:02X}", val)
                     },
-                    ORA | _ => {
+                    ORA => {
                         self.accumulator |= val;
                         format!("Logical ORA result: {:02X}", val)
                     }
@@ -404,7 +398,7 @@ impl CPU {
                 Ok(msg)
             },
 
-            c @ CMP | c @ CPX | c @ CPY => {
+            c @ Code::CMP | c @ Code::CPX | c @ Code::CPY => {
                 let (bytes, extra_cycles, val) = self.address_read(a)?;
                 let lhs = if c == Code::CMP {
                     self.accumulator
@@ -432,7 +426,7 @@ impl CPU {
                            lhs, val, self.status_register))
             },
             
-            BIT => {
+            Code::BIT => {
                 let (bytes, extra_cycles, val) = self.address_read(a)?;
                 self.status_register.bits |= (self.accumulator & val) & 0b1100_0000;
                 self.counter += min_cycles + extra_cycles;
@@ -440,53 +434,54 @@ impl CPU {
                 Ok(format!("Set V and C {}", self.status_register.bits & 0b1100_0000))
             },
             
-            BCC => {
+            Code::BCC => {
                 let cond = self.status_register.get_flags_status(StatusFlags::C);
                 self.branch(a, min_cycles, "BCC", !cond)
             },
-            BCS => {
+            Code::BCS => {
                 let cond = self.status_register.get_flags_status(StatusFlags::C);
                 self.branch(a, min_cycles, "BCS", cond)
             },
-            BEQ => {
+            Code::BEQ => {
                 let cond = self.status_register.get_flags_status(StatusFlags::Z);
                 self.branch(a, min_cycles, "BEQ", cond)
             },
-            BNE => {
+            Code::BNE => {
                 let cond = self.status_register.get_flags_status(StatusFlags::Z);
                 self.branch(a, min_cycles, "BNE", !cond)
             },
-            BMI => {
+            Code::BMI => {
                 let cond = self.status_register.get_flags_status(StatusFlags::N);
                 self.branch(a, min_cycles, "BMI", cond)
             },
-            BPL => {
+            Code::BPL => {
                 let cond = self.status_register.get_flags_status(StatusFlags::N);
                 self.branch(a, min_cycles, "BPL", !cond)
             },
-            BVC => {
+            Code::BVC => {
                 let cond = self.status_register.get_flags_status(StatusFlags::V);
                 self.branch(a, min_cycles, "BVC", !cond)
             },
-            BVS => {
+            Code::BVS => {
                 let cond = self.status_register.get_flags_status(StatusFlags::V);
                 self.branch(a, min_cycles, "BVS", cond)
             },
-            TAX => {
+            
+            Code::TAX => {
                 let val = self.accumulator;
                 self.x = val;
                 self.set_zn(val);
                 self.counter += min_cycles;
                 Ok(format!("Transferred A to X"))
             },
-            TXA => {
+            Code::TXA => {
                 let val = self.x;
                 self.accumulator = val;
                 self.set_zn(val);
                 self.counter += min_cycles;
                 Ok(format!("Transferred X to A"))
             },
-            TAY => {
+            Code::TAY => {
                 let val = self.accumulator;
                 self.y = val;
                 self.set_zn(val);
@@ -494,7 +489,7 @@ impl CPU {
                 Ok(format!("Transferred A to Y"))
 
             },
-            TYA => {
+            Code::TYA => {
                 let val = self.y;
                 self.accumulator = val;
                 self.set_zn(val);
@@ -502,42 +497,46 @@ impl CPU {
                 Ok(format!("Transferred Y to A"))
 
             },
-            TSX => {
+            Code::TSX => {
                 let val = self.stack_pop()?;
                 self.x = val;
                 self.set_zn(val);
                 Ok(format!("Popped from the stack to X"))
             },
-            TXS => {
+            Code::TXS => {
                 let val = self.x;
                 self.stack_push(val)?;
                 self.counter += min_cycles;
-                Ok(format!("Transferred x to stack"))
+                Ok(format!("Pushed x to stack"))
             },
-            PHA => {
+            
+            Code::PHA => {
                 self.counter += min_cycles;
                 let val = self.accumulator;
-                self.stack_push(val)
+                self.stack_push(val)?;
+                Ok(format!("Pushed accumulator to stack"))
             },
-            PLA => {
+            Code::PLA => {
                 self.counter += min_cycles;
                 let acc = self.stack_pop()?;
                 self.set_zn(acc);
                 self.accumulator = acc;
-                Ok(format!("Pulled accumulator from stack!"))
+                Ok(format!("Pulled accumulator from stack"))
             },
-            PHP => {
+            Code::PHP => {
                 self.counter += min_cycles;
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                self.stack_push(flags.bits)
+                self.stack_push(flags.bits)?;
+                Ok(format!("Pushed status onto stack"))
             },
-            PLP => {
+            Code::PLP => {
                 self.counter += min_cycles;
                 let flags = self.stack_pop()?;
                 self.status_register.bits |= flags;
-                Ok(format!("Pulled processor flags from stack!"))
+                Ok(format!("Pulled processor flags from stack"))
             },
-            JMP => {
+            
+            Code::JMP => {
                 match a {
                     Specified(DoubleByte(Indirect)) => {
                         let pc = self.pc;
@@ -556,7 +555,7 @@ impl CPU {
                     _ => Err(format!("JMP doesn't use {:?}", a))
                 }
             },
-            JSR => {
+            Code::JSR => {
                 match a {
                     Specified(DoubleByte(Absolute)) => {
                         let pc = self.pc;
@@ -570,13 +569,13 @@ impl CPU {
                     _ => Err(format!("JSR doesn't use {:?}", a))
                 }
             },
-            RTS => {
+            Code::RTS => {
                 let addr = self.stack_pop_double()?;
                 self.pc = addr + 1;
                 self.counter += min_cycles;
                 Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
-            RTI => {
+            Code::RTI => {
                 let flags = self.stack_pop()?;
                 self.status_register.bits = flags;
                 let addr = self.stack_pop_double()?;
@@ -584,18 +583,21 @@ impl CPU {
                 self.counter += min_cycles;
                 Ok(format!("Set pc to {:04X} from interrupt", self.pc))
             },
-            SEC => self.set_flag(min_cycles, StatusFlags::C),
-            SED => self.set_flag(min_cycles, StatusFlags::D),
-            SEI => self.set_flag(min_cycles, StatusFlags::I),
-            CLC => self.clear_flag(min_cycles, StatusFlags::C),
-            CLD => self.clear_flag(min_cycles, StatusFlags::D),
-            CLI => self.clear_flag(min_cycles, StatusFlags::I),
-            CLV => self.clear_flag(min_cycles, StatusFlags::V),
-            NOP => {
+            
+            Code::SEC => self.set_flag(min_cycles, StatusFlags::C),
+            Code::SED => self.set_flag(min_cycles, StatusFlags::D),
+            Code::SEI => self.set_flag(min_cycles, StatusFlags::I),
+            
+            Code::CLC => self.clear_flag(min_cycles, StatusFlags::C),
+            Code::CLD => self.clear_flag(min_cycles, StatusFlags::D),
+            Code::CLI => self.clear_flag(min_cycles, StatusFlags::I),
+            Code::CLV => self.clear_flag(min_cycles, StatusFlags::V),
+            
+            Code::NOP => {
                 self.counter += min_cycles;
                 Ok(format!("NOP"))
             },
-            BRK => {
+            Code::BRK => {
                 self.counter += 7;
                 let addr = self.pc;
                 self.stack_push_double(addr)?;
@@ -606,7 +608,7 @@ impl CPU {
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)
             },
-            ILL => Err(format!("Illegal instruction {:02X}!", o))
+            Code::ILL => Err(format!("Illegal instruction {:02X}!", o))
         }     
     }
         
@@ -640,7 +642,7 @@ impl CPU {
 
     fn stack_decrement(&mut self) -> CPUResult<()> {
         if self.stack_pointer == 0 {
-            Err(format!("Stack overflow!"))
+            Err(format!("Stack underflow!"))
         } else {
             self.stack_pointer -= 1;
             Ok(())
@@ -649,7 +651,7 @@ impl CPU {
 
     fn stack_increment(&mut self) -> CPUResult<()> {
         if self.stack_pointer == 255 {
-            Err(format!("Stack underflow!"))
+            Err(format!("Stack overflow!"))
         } else {
             self.stack_pointer += 1;
             Ok(())
@@ -699,15 +701,15 @@ impl CPU {
         match c {
             LDA => {
                 self.accumulator = val;
-                Ok(format!("Loaded {:08b} into A", val))
+                Ok(format!("Loaded ({:08b}) into A", val))
             },
             LDX => {
                 self.x = val;
-                Ok(format!("Loaded {:08b} into X", val))
+                Ok(format!("Loaded ({:08b}) into X", val))
             },                
             LDY => {
                 self.y = val;
-                Ok(format!("Loaded {:08b} into A", val))
+                Ok(format!("Loaded ({:08b}) into A", val))
             },
             _ => panic!(format!("Expected LDx, found {:?}", c))
         }
