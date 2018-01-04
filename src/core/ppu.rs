@@ -1,3 +1,5 @@
+use core::cpu::CPUResult;
+
 bitflags! {
     pub struct PPUCTRL: u8 {
         const INIT = 0;
@@ -109,7 +111,7 @@ impl PPU {
         }
     }
 
-    pub fn write(&mut self, address: u16, val: u8) {
-        ()
+    pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
+        Ok(format!(""))
     }
 }

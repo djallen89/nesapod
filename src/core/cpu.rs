@@ -154,14 +154,6 @@ impl CPU {
         self.execute(Code::JMP, Specified(DoubleByte(Indirect)), 5, 0x6C)
     }
 
-    pub fn get_pc(&self) -> u16 {
-        self.pc
-    }
-
-    pub fn get_counter(&self) -> u16 {
-        self.counter
-    }
-
     pub fn step(&mut self) -> CPUResult<String> {
         let addr = self.pc;
         let opcode = self.read(addr)?;
@@ -177,7 +169,7 @@ impl CPU {
         match address {
             0x0000 ... 0x1FFF => Ok(self.ram[(address % 2048) as usize]),
             0x2000 ... 0x3FFF => Ok(self.ppu.read(address)),
-            0x4000 ... 0x4017 => Err(format!("APU and IO not yet implemented!")),
+            0x4000 ... 0x4017 => Ok(self.aio_registers[(address - 0x4000) as usize]),
             0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
             0x4020 ... 0xFFFF => self.cartridge.read(address),
             _ => Err(format!("I dunno lol"))
@@ -196,11 +188,11 @@ impl CPU {
                 self.ram[(address % 2048) as usize] = val;
                 Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
-            0x2000 ... 0x3FFF => {
-                self.ppu.write(address, val);
-                Ok(format!("Wrote {:02X} to ppu {:04X}", val, address))
+            0x2000 ... 0x3FFF => self.ppu.write(address, val),
+            0x4000 ... 0x4017 => {
+                self.aio_registers[(address - 0x4000) as usize] = val;
+                Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
-            0x4000 ... 0x4017 => Err(format!("APU and IO not yet implemented!")),
             0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
             0x4020 ... 0xFFFF => self.cartridge.write(address, val),
             _ => Err(format!("I dunno lol"))
@@ -433,6 +425,8 @@ impl CPU {
                 };
                 let res = self.axy_registers[ACCUMULATOR];
                 self.set_zn(res);
+                self.pc += bytes;
+                self.counter += min_cycles + extra_cycles;
                 Ok(msg)
             },
 
