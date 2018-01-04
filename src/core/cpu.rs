@@ -151,7 +151,7 @@ impl CPU {
     }
 
     pub fn init(&mut self) -> CPUResult<String> {
-        self.execute(Code::JMP, Specified(DoubleByte(Indirect)), 5, 0x6C)
+        self.execute(Code::JMP, Specified(DoubleByte(Absolute)), 5, 0x6C)
     }
 
     pub fn step(&mut self) -> CPUResult<String> {
@@ -228,11 +228,11 @@ impl CPU {
             DoubleType::Absolute => Ok((0, addr)),
             DoubleType::AbsoluteY => {
                 let extra = counter_inc(addr, self.axy_registers[X]);
-                Ok((extra, (self.axy_registers[X] as u16) + addr))
+                Ok((extra, (self.axy_registers[Y] as u16) + addr))
             },
             DoubleType::AbsoluteX => {
                 let extra = counter_inc(addr, self.axy_registers[Y]);
-                Ok((extra, (self.axy_registers[Y] as u16) + addr))
+                Ok((extra, (self.axy_registers[X] as u16) + addr))
             },
             DoubleType::Indirect => panic!("No indirect in decode double byte!")
         }
@@ -551,8 +551,8 @@ impl CPU {
                         let addr = self.read_two_bytes(pc)?;
                         let real_addr = self.read_two_bytes(addr)?;
                         self.counter += min_cycles;
-                        self.pc = addr;
-                        Ok(format!("Set pc to ${:04X}", addr))
+                        self.pc = real_addr;
+                        Ok(format!("Set pc to ${:04X}", real_addr))
                     },
                     Specified(DoubleByte(Absolute)) => {
                         let pc = self.pc;
@@ -711,8 +711,7 @@ impl CPU {
     fn load(&mut self, a: Address, min_cycles: u16, r: usize) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
         self.set_zn(val);
-        self.pc += bytes;
-        self.counter += min_cycles + extra_cycles;
+        self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         self.axy_registers[r] = val;
         Ok(format!("Loaded ({:08b}) into axy register {}", val, r))
     }
@@ -743,8 +742,7 @@ impl CPU {
         let overflow = ((self.axy_registers[ACCUMULATOR] ^ res) & 0x80) != 0;
         self.set_cznv(res, next_carry, overflow);
         self.axy_registers[ACCUMULATOR] = res;
-        self.pc += bytes;
-        self.counter += min_cycles + extra_cycles;
+        self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Added {} to accumulator for {} with carry {}",
                    rhs.wrapping_add(carry), res, next_carry))
     }
@@ -757,8 +755,7 @@ impl CPU {
         let overflow = ((self.axy_registers[ACCUMULATOR] ^ (255 - res)) & 0x80) != 0;
         self.set_cznv(res, !next_carry, overflow);
         self.axy_registers[ACCUMULATOR] = res;
-        self.pc += bytes;
-        self.counter += min_cycles + extra_cycles;
+        self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Subtracted {} from accumulator for result {} with carry: {} and overflow: {} ",
                    rhs, res, next_carry, overflow))
     }
@@ -786,19 +783,17 @@ impl CPU {
     fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, cond: bool) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
         if cond {
-            self.counter += min_cycles + 1 + 2 * extra_cycles;
-            self.pc += bytes;
+            self.modify_pc_counter(bytes, min_cycles + 1 + 2 * extra_cycles);
             if val > 127 {
                 let addr = -((val as i8) as i16) as u16;
                 self.pc -= addr;
-                Ok(format!("{}: Branched by -{})", msg, addr))
+                Ok(format!("{}: Branched by -{}", msg, addr))
             } else {
                 self.pc += val as u16;
                 Ok(format!("{}: Branched by {}", msg, val))
             }
         } else {
-            self.counter += min_cycles;
-            self.pc += bytes;
+            self.modify_pc_counter(bytes, min_cycles);
             Ok(format!("{}: No branch.", msg))
         }
     }
@@ -806,21 +801,15 @@ impl CPU {
     fn cmp(&mut self, a: Address, min_cycles: u16, lhs_idx: usize) -> CPUResult<String> {
         let lhs = self.axy_registers[lhs_idx];
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
-        if lhs < val {
-            self.clear_flag_op(StatusFlags::C);
-            self.set_flag_op(StatusFlags::N);
-            self.clear_flag_op(StatusFlags::Z);
-        } else if lhs == val {
-            self.set_flag_op(StatusFlags::C);
-            self.clear_flag_op(StatusFlags::N);
-            self.set_flag_op(StatusFlags::Z);
-        } else {
-            self.set_flag_op(StatusFlags::C);
-            self.clear_flag_op(StatusFlags::N);
-            self.clear_flag_op(StatusFlags::Z);
-        }
-        self.pc += bytes;
-        self.counter += min_cycles + extra_cycles;
+        let res = lhs.wrapping_sub(val);
+        let carry = lhs < val;
+        self.set_czn(res, carry);
+        self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Compared {} to {} for result {:?}", lhs, val, self.status_register))
+    }
+
+    fn modify_pc_counter(&mut self, bytes: u16, cycles: u16) {
+        self.pc += bytes;
+        self.counter += cycles;
     }
 }

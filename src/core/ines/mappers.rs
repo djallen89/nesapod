@@ -78,7 +78,7 @@ pub mod sxrom {
             let len = self.sr_len();
             if len < 4 {
                 self.shift_register(val)
-            } else if len == 5 {
+            } else if len == 4 {
                 self.shift_register(val)?;
                 self.set_register(addr)
             } else {
