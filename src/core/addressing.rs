@@ -30,7 +30,7 @@ pub enum DoubleType {
     Absolute,
     AbsoluteX,
     AbsoluteY,
-    Indirect
+    Indirect,
 }
 
 const ACC: Address = Address::Acc;

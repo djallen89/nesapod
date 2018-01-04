@@ -204,11 +204,11 @@ impl CPU {
             ZeroPg => Ok((0, addr as u16)),
             ZeroPg_X => Ok((0, self.x.wrapping_add(addr) as u16)),
             ZeroPg_Y => Ok((0, (self.y as u16) + (addr as u16))),
-            Indirect_X => {
+            SingleType::IndirectX => {
                 let real_addr = self.x.wrapping_add(addr) as u16;
                 Ok((0, self.read_two_bytes(real_addr)?))
             },
-            Indirect_Y => {
+            IndirectY => {
                 let pre_addr = self.read_two_bytes(addr as u16)?;
                 let extra = counter_inc(pre_addr, self.y);
                 let real_addr = (self.y as u16) + pre_addr;
@@ -222,16 +222,16 @@ impl CPU {
         let pc = self.pc;
         let addr = self.read_two_bytes(pc)?;
         match d {
-            Absolute => Ok((0, addr)),
-            Absolute_Y => {
+            DoubleType::Absolute => Ok((0, addr)),
+            DoubleType::AbsoluteY => {
                 let extra = counter_inc(addr, self.x);
                 Ok((extra, (self.x as u16) + addr))
             },
-            Absolute_X => {
+            DoubleType::AbsoluteX => {
                 let extra = counter_inc(addr, self.y);
                 Ok((extra, (self.y as u16) + addr))
             },
-            Indirect => panic!("No indirect in decode double byte!")
+            DoubleType::Indirect => panic!("No indirect in decode double byte!")
         }
     }
 
@@ -380,18 +380,19 @@ impl CPU {
                 self.pc += bytes;
                 self.counter += min_cycles + extra_cycles;
                 let msg = match c {
-                    AND => {
+                    Code::AND => {
                         self.accumulator &= val;
                         format!("Logical AND result: {:02X}", val)
                     },
-                    EOR => {
+                    Code::EOR => {
                         self.accumulator ^= val;
                         format!("Logical EOR result: {:02X}", val)
                     },
-                    ORA => {
+                    Code::ORA => {
                         self.accumulator |= val;
                         format!("Logical ORA result: {:02X}", val)
-                    }
+                    },
+                    x => panic!(format!("Unexpected {:?}", x))
                 };
                 let res = self.accumulator;
                 self.set_zn(res);
@@ -699,19 +700,19 @@ impl CPU {
         self.pc += bytes;
         self.counter += min_cycles + extra_cycles;
         match c {
-            LDA => {
+            Code::LDA => {
                 self.accumulator = val;
                 Ok(format!("Loaded ({:08b}) into A", val))
             },
-            LDX => {
+            Code::LDX => {
                 self.x = val;
                 Ok(format!("Loaded ({:08b}) into X", val))
             },                
-            LDY => {
+            Code::LDY => {
                 self.y = val;
                 Ok(format!("Loaded ({:08b}) into A", val))
             },
-            _ => panic!(format!("Expected LDx, found {:?}", c))
+            x => panic!(format!("Unexpected {:?}", x))
         }
     }
 
@@ -730,14 +731,14 @@ impl CPU {
 
     fn inc_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
         match c {
-            INX => {
+            Code::INX => {
                 let val = self.x.wrapping_add(1);
                 self.counter += min_cycles;
                 self.set_zn(val);
                 self.x = val;
                 Ok(format!("Incremented x by one for res {:02X}", val))
             },
-            INY => {
+            Code::INY => {
                 let val = self.y.wrapping_add(1);
                 self.counter += min_cycles;
                 self.set_zn(val);
@@ -757,14 +758,14 @@ impl CPU {
     
     fn dec_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
         match c {
-            DEX => {
+            Code::DEX => {
                 let val = self.x.wrapping_sub(1);
                 self.counter += min_cycles;
                 self.set_zn(val);
                 self.x = val;
                 Ok(format!("Incremented x by one"))
             },
-            DEY => {
+            Code::DEY => {
                 let val = self.y.wrapping_sub(1);
                 self.counter += min_cycles;
                 self.set_zn(val);
