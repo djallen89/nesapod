@@ -43,10 +43,10 @@ impl StatusFlags {
             StatusFlags::Z => 1,
             StatusFlags::I => 2,
             StatusFlags::D => 3,
-            StatusFlags::B => 5,
-            StatusFlags::S => 6,
-            StatusFlags::V => 7,
-            StatusFlags::N => 8,
+            StatusFlags::B => 4,
+            StatusFlags::S => 5,
+            StatusFlags::V => 6,
+            StatusFlags::N => 7,
             _ => panic!(format!("Flag position of {:?} doesn't make sense!", flag))
         }
     }
