@@ -201,14 +201,14 @@ impl CPU {
         let pc = self.pc;
         let addr = self.read(pc)?;
         match s {
-            ZeroPg => Ok((0, addr as u16)),
-            ZeroPg_X => Ok((0, self.x.wrapping_add(addr) as u16)),
-            ZeroPg_Y => Ok((0, (self.y as u16) + (addr as u16))),
+            SingleType::ZeroPg => Ok((0, addr as u16)),
+            SingleType::ZeroPgX => Ok((0, self.x.wrapping_add(addr) as u16)),
+            SingleType::ZeroPgY => Ok((0, (self.y as u16) + (addr as u16))),
             SingleType::IndirectX => {
                 let real_addr = self.x.wrapping_add(addr) as u16;
                 Ok((0, self.read_two_bytes(real_addr)?))
             },
-            IndirectY => {
+            SingleType::IndirectY => {
                 let pre_addr = self.read_two_bytes(addr as u16)?;
                 let extra = counter_inc(pre_addr, self.y);
                 let real_addr = (self.y as u16) + pre_addr;
@@ -275,7 +275,9 @@ impl CPU {
             Specified(SingleByte(Immediate)) => panic!("Don't use read modify write for {:?}", a),
             Acc => {
                 let val = self.accumulator;
+                print!("{} -> {:?} ->", val, op);
                 let res = op(self, val);
+                println!("{}", res);
                 self.accumulator = res;
                 self.set_zn(res);
                 Ok(format!("{} Acc ({:02X}) for res {:02X}", msg, val, res))
@@ -287,7 +289,7 @@ impl CPU {
                 self.write(addr, res)?;
                 self.pc += 1;
                 self.set_zn(res);
-                Ok(format!("{} {:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
+                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
             },
             Specified(DoubleByte(d)) => {
                 let (_, addr) = self.decode_double_byte(d)?;
@@ -296,7 +298,7 @@ impl CPU {
                 self.write(addr, val)?;
                 self.pc += 2;
                 self.set_zn(res);
-                Ok(format!("{} {:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
+                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
             }
         }
     }
@@ -544,14 +546,14 @@ impl CPU {
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
                         self.pc = addr;
-                        Ok(format!("Set pc to {:04X}", addr))
+                        Ok(format!("Set pc to ${:04X}", addr))
                     },
                     Specified(DoubleByte(Absolute)) => {
                         let pc = self.pc;
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
                         self.pc = addr;
-                        Ok(format!("Set pc to {:04X}", addr))
+                        Ok(format!("Set pc to ${:04X}", addr))
                     }
                     _ => Err(format!("JMP doesn't use {:?}", a))
                 }
@@ -565,7 +567,7 @@ impl CPU {
                         let ret_addr = self.pc + 2 - 1;
                         self.stack_push_double(ret_addr)?;
                         self.pc = addr;
-                        Ok(format!("Pushed {:04X} onto stack and set pc to {:04X}.", ret_addr, addr))
+                        Ok(format!("Pushed ${:04X} onto stack and set pc to {:04X}.", ret_addr, addr))
                     },
                     _ => Err(format!("JSR doesn't use {:?}", a))
                 }
@@ -726,7 +728,7 @@ impl CPU {
 
     fn inc(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let msg = format!("Incremented ");
-        self.address_read_modify_write(a, min_cycles, msg, &|cpu, x| {x.wrapping_add(1)})
+        self.address_read_modify_write(a, min_cycles, msg, &|_cpu, x| {x.wrapping_add(1)})
     }
 
     fn inc_reg(&mut self, min_cycles: u16, c: Code) -> CPUResult<String> {
@@ -751,7 +753,7 @@ impl CPU {
 
    fn dec(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
        let msg = format!("Decremented ");
-       self.address_read_modify_write(a, min_cycles, msg, &|cpu, x| {
+       self.address_read_modify_write(a, min_cycles, msg, &|_cpu, x| {
             x.wrapping_sub(1)
         })
     }

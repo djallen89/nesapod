@@ -70,6 +70,10 @@ pub mod sxrom {
             }
         }
 
+        pub fn prg_ram_enabled(&self) -> bool {
+            self.prg_ram_enable
+        }
+
         pub fn write(&mut self, addr: u16, val: u8) -> CPUResult<String> {
             let len = self.sr_len();
             if len < 4 {
