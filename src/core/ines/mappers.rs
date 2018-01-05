@@ -74,20 +74,20 @@ pub mod sxrom {
             self.prg_ram_enable
         }
 
-        pub fn prg_rom_read(&self, idx: u16) -> usize {
+        pub fn prg_read(&self, idx: u16) -> usize {
             match self.prg_bank_mode {
                 PrgBankMode::Ignore => {
                     /* 32 KB bank mode */
-                    let bank = ((self.prg_bank as usize) & 0b0000_1110) << 13;
-                    bank + (idx as usize) - 0x8000
+                    let bank = ((self.prg_bank as usize) & 0b01110) << 14;
+                    bank + (idx as usize)
                 },
                 PrgBankMode::First => {
-                    let bank = (self.prg_bank as usize) << 13;
-                    bank + (idx as usize) - 0x8000 + 0xC000
+                    let bank = (self.prg_bank as usize) << 14;
+                    bank + (idx as usize) + 0xC000
                 },
                 PrgBankMode::Last => {
-                    let bank = (self.prg_bank as usize) << 13;
-                    bank + (idx as usize) - 0x8000
+                    let bank = (self.prg_bank as usize) << 14;
+                    bank + (idx as usize)
                 }
             }
         }

@@ -28,11 +28,10 @@ pub fn main(logging: bool, rom: Option<String>) {
             panic!(f);
         }
     };
-    let mut emulator = CPU::power_up(ines);
-    match emulator.init() {
-        Ok(r) => debugger.input(&format!("{}\n", r)),
-        Err(f) => debugger.input(&format!("{}\n", f))
-    }
+    let mut emulator = match CPU::power_up(ines) {
+        Ok(emu) => emu,
+        Err(f) => panic!(f)
+    };
     debugger.input(&format!("{}", emulator));
 
 
@@ -125,9 +124,16 @@ pub fn main(logging: bool, rom: Option<String>) {
                                 &VirtualKeyCode::D => 13,
                                 &VirtualKeyCode::E => 14,
                                 &VirtualKeyCode::F => 15,
-                                &VirtualKeyCode::S => 64,
-                                &VirtualKeyCode::Z => 256,
-                                &VirtualKeyCode::L => 1 << 12,
+                                &VirtualKeyCode::Z => 255,
+                                &VirtualKeyCode::L => 1023,
+                                &VirtualKeyCode::R => {
+                                    emulator.rewind_pc();
+                                    break
+                                },
+                                &VirtualKeyCode::S => {
+                                    emulator.step_pc();
+                                    break
+                                },
                                 _ => 0
                             };
                             while steps > 0 {

@@ -228,7 +228,7 @@ impl INES {
         match self.mapper {
             Mapper::NROM => {
                 match idx {
-                    0x0000 ... 0x5FFF => panic!(format!("{:04X} not on cartridge", idx)),
+                    0x0000 ... 0x5FFF => panic!(format!("Can't read {:04X}; not on cartridge", idx)),
                     0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
                     0x8000 ... 0xFFFF => {
                         Ok(self.prg_rom[((idx - 0x8000) as usize) % self.prg_rom_size])
@@ -238,13 +238,13 @@ impl INES {
             },
             Mapper::SXROM(ref sxrom) => {
                 match idx {
-                    0x0000 ... 0x5FFF => panic!(format!("{:04X} not on cartridge", idx)),
+                    0x0000 ... 0x401F => panic!(format!("Can't read {:04X}; not on cartridge", idx)),
+                    0x4020 ... 0x5999 => panic!(format!("Can't read {:04X}; not mapped on MMC1", idx)),
                     0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
-                    0x8000 ... 0xFFFF => {
-                        let addr = sxrom.prg_rom_read(idx);
-                        Ok(self.prg_rom[((addr) as usize)])
-                    },
-                    _ => panic!("This should not happen with u16")
+                    x => {
+                        let addr = sxrom.prg_read(idx) - 0x8000;
+                        Ok(self.prg_rom[addr])
+                    }
                 }
             },
             x => Err(format!("{:?} not covered yet", x))
@@ -255,7 +255,7 @@ impl INES {
         match self.mapper {
             Mapper::NROM => {
                 match idx {
-                    0x0000 ... 0x5FFF => Err(format!("{:04X} not on cartridge", idx)),
+                    0x0000 ... 0x5FFF => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
                     0x6000 ... 0x7FFF => {
                         self.prg_ram[(idx - 0x6000) as usize] = val;
                         Ok(format!("Wrote {:02X} to address {:04X}", val, idx))
@@ -266,7 +266,8 @@ impl INES {
             },
             Mapper::SXROM(ref mut sxrom) => {
                 match idx {
-                    0x0000 ... 0x5FFF => Err(format!("{:04X} not on cartridge", idx)),
+                    0x0000 ... 0x401F => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
+                    0x4020 ... 0x5999 => panic!(format!("Can't write to {:04X}; no effect on any register", idx)),
                     0x6000 ... 0x7FFF => {
                         if sxrom.prg_ram_enabled() {
                             self.prg_ram[(idx - 0x6000) as usize] = val;
@@ -276,8 +277,7 @@ impl INES {
                             val, idx))
                         }
                     },
-                    0x8000 ... 0xFFFF => sxrom.write(idx, val),
-                    _ => panic!("This should not happen with u16")
+                    x => sxrom.write(x, val),
                 }
             },
             x => Err(format!("{:?} not covered yet", x))

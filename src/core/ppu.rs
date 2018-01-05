@@ -1,4 +1,6 @@
-use core::cpu::CPUResult;
+pub const VISIBLE_SCANLINES: usize = 240;
+pub const PRE_VBLANK_LINE: usize = 1;
+pub const VBLANK_LINES: usize = 20;
 
 bitflags! {
     pub struct PPUCTRL: u8 {
@@ -92,7 +94,7 @@ impl PPU {
             0 => self.ppu_gen_latch,
             1 => self.ppu_gen_latch,
             2 => {
-                let val = self.ppu_status.bits + (self.ppu_gen_latch | 0b00011111);
+                let val = self.ppu_status.bits | (self.ppu_gen_latch & 0b00011111);
                 self.ppu_gen_latch = val;
                 self.ppu_gen_latch
             },
@@ -106,12 +108,39 @@ impl PPU {
             6 => self.ppu_gen_latch,
             7 | _ => {
                 self.ppu_gen_latch = self.video_ram[self.vram_addr as usize];
+                self.vram_increment();
                 self.ppu_gen_latch
             },
         }
     }
 
-    pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
-        Ok(format!(""))
+    pub fn write(&mut self, address: u16, val: u8) {
+        self.ppu_gen_latch = val;
+        match address % 8 {
+            0 => self.ppu_ctrl.bits = val,
+            1 => self.ppu_mask.bits = val,
+            2 => {},
+            3 => self.oam_addr = val,
+            4 => {
+                self.oam_addr = self.oam_addr.wrapping_add(1);
+                self.oam_data = val;
+            },
+            5 => self.ppu_scroll = val,
+            6 => self.ppu_addr = val,
+            7 | _ => {
+                self.video_ram[self.vram_addr as usize];
+                self.vram_increment();
+            }
+        }
+    }
+
+    pub fn oam_dma_write(&mut self, val: u8) {
+        self.oam_ram[self.oam_dma as usize] = val;
+        self.oam_dma += 1;
+    }
+
+    fn vram_increment(&mut self) {
+        let inc = (self.ppu_ctrl & PPUCTRL::VRAM_INCREMENT).bits as u16;
+        self.vram_addr += inc
     }
 }

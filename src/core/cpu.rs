@@ -10,9 +10,10 @@ use core::addressing::DoubleType::*;
 pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
+pub const FRAME_TIMING: u16 = 29780;
 pub const RESET_VECTOR: u16 = 0xFFFC;
 pub const IRQ_VECTOR: u16 = 0xFFFE;
-pub const STACK_REGION: u16 = 0x01A0;
+pub const STACK_REGION: u16 = 0x0100;
 pub const ACCUMULATOR: usize = 0;
 pub const X: usize = 1;
 pub const Y: usize = 2;
@@ -60,17 +61,19 @@ impl StatusFlags {
     }
 }
 
-
-pub fn split(u: u16) -> (u8, u8) {
-    let lower = (u & 0x0F) as u8;
+#[inline(always)]
+fn split(u: u16) -> (u8, u8) {
+    let lower = (u & 0xFF) as u8;
     let upper = (u >> 8) as u8;
     (lower, upper)
 }
 
-pub fn combine(lower: u8, upper: u8) -> u16 {
+#[inline(always)]
+fn combine(lower: u8, upper: u8) -> u16 {
     ((upper as u16) << 8) + (lower as u16)
 }
 
+#[inline(always)]
 pub fn counter_inc(x: u16, y: u8) -> u16 {
     //x + y > c  | x + y < c
     //c < x + y  | c > x + y
@@ -126,11 +129,10 @@ impl fmt::Display for CPU {
 }
 
 impl CPU {
-    pub fn power_up(ines: INES) -> CPU {
-        let pc = RESET_VECTOR;
-        CPU {
+    pub fn power_up(ines: INES) -> Result<CPU, String> {
+        let mut cpu = CPU {
             counter: 0,
-            pc: pc,
+            pc: RESET_VECTOR,
             stack_pointer: POWERUP_S,
             axy_registers: vec![0, 0, 0],
             aio_registers: vec![0; 32],
@@ -138,33 +140,42 @@ impl CPU {
             ram: [0; 2048],
             ppu: PPU::init(),
             cartridge: ines,
-        }
+        };
+        cpu.reset()?;
+        Ok(cpu)
     }
 
-    pub fn _reset(&mut self) {
+    pub fn reset(&mut self) -> CPUResult<String> {
         self.stack_pointer -= 3;
         self.status_register = self.status_register | StatusFlags::I;
+        self.execute(Code::JMP, Specified(DoubleByte(Absolute)), 5, 0x6C)
     }
 
     pub fn shut_down(self) -> INES {
         self.cartridge
     }
 
-    pub fn init(&mut self) -> CPUResult<String> {
-        self.execute(Code::JMP, Specified(DoubleByte(Absolute)), 5, 0x6C)
-    }
-
     pub fn step(&mut self) -> CPUResult<String> {
         let addr = self.pc;
         let opcode = self.read(addr)?;
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
-        if u16::MAX - self.counter < 7 {
-            self.counter = 0; //temporary hack til timing is implemented
+        if self.counter >= FRAME_TIMING - 7 {
+            self.counter = 0; 
         }
-        self.pc += 1;
+        let next = self.pc.wrapping_add(1);
+        self.pc = next;
         self.execute(code, address, cycles, opcode)
     }
 
+    pub fn rewind_pc(&mut self) {
+        self.pc -= 1;
+    }
+
+    pub fn step_pc(&mut self) {
+        self.pc += 1;
+    }
+
+    #[inline(always)]
     pub fn read(&mut self, address: u16) -> CPUResult<u8> {
         match address {
             0x0000 ... 0x1FFF => Ok(self.ram[(address % 2048) as usize]),
@@ -175,21 +186,35 @@ impl CPU {
             _ => Err(format!("I dunno lol"))
         }
     }
-
+    
+    #[inline(always)]
     pub fn read_two_bytes(&mut self, addr: u16) -> CPUResult<u16> {
         let lower = self.read(addr)?;
         let upper = self.read(addr + 1)?;
         Ok(combine(lower, upper))
     }
-    
+
+    #[inline(always)]
     pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
         match address as usize {
             0x0000 ... 0x1FFF => {
                 self.ram[(address % 2048) as usize] = val;
                 Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
-            0x2000 ... 0x3FFF => self.ppu.write(address, val),
-            0x4000 ... 0x4017 => {
+            0x2000 ... 0x3FFF => {
+                self.ppu.write(address, val);
+                Ok(format!("Wrote {:02X} to PPU register 0x200{}", val, address % 8))
+            },
+            0x4014 => {
+                let page = (val as u16) << 8;
+                for b in page .. page + 256 {
+                    let val = self.read(b)?;
+                    self.ppu.oam_dma_write(val);
+                }
+                self.counter += 514;
+                Ok(format!("Wrote {:04X} to {:04X} to PPU OAM", page, page + 255))
+            }
+            0x4000 ... 0x4013 | 0x4015 ... 0x4017 => {
                 self.aio_registers[(address - 0x4000) as usize] = val;
                 Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
@@ -206,7 +231,7 @@ impl CPU {
         match s {
             SingleType::ZeroPg => Ok((0, addr as u16)),
             SingleType::ZeroPgX => Ok((0, self.axy_registers[X].wrapping_add(addr) as u16)),
-            SingleType::ZeroPgY => Ok((0, (self.axy_registers[Y] as u16) + (addr as u16))),
+            SingleType::ZeroPgY => Ok((0, self.axy_registers[Y].wrapping_add(addr) as u16)),
             SingleType::IndirectX => {
                 let real_addr = self.axy_registers[X].wrapping_add(addr) as u16;
                 Ok((0, self.read_two_bytes(real_addr)?))
@@ -221,6 +246,7 @@ impl CPU {
         }
     }
 
+    #[inline(always)]
     fn decode_double_byte(&mut self, d: DoubleType) -> CPUResult<(u16, u16)> {
         let pc = self.pc;
         let addr = self.read_two_bytes(pc)?;
@@ -241,6 +267,7 @@ impl CPU {
     /// Returns the number of bytes of an instruction, if it takes an extra cycle by
     /// crossing a page and the value stored at that location (excepting immediate and
     /// relative instructions).
+    #[inline(always)]
     fn address_read(&mut self, a: Address, implied: Option<usize>) -> CPUResult<(u16, u16, u8)> {
         let pc = self.pc;
         let (bytes, extra_cycles, val) = match a {
@@ -266,7 +293,8 @@ impl CPU {
         };
         Ok((bytes, extra_cycles, val))
     }
-
+    
+    #[inline(always)]
     fn address_read_modify_write(&mut self, a: Address, min_cycles: u16, msg: &str, implied: Option<usize>,
                                  op: &Fn(&mut CPU, u8) -> u8) -> CPUResult<String> {
         use core::addressing::Address::*;
@@ -301,7 +329,7 @@ impl CPU {
                 let res = op(self, val);
                 self.write(addr, res)?;
                 self.pc += 1;
-                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
+                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, addr, val, res))
             },
             Specified(DoubleByte(d)) => {
                 let (_, addr) = self.decode_double_byte(d)?;
@@ -309,13 +337,12 @@ impl CPU {
                 let res = op(self, val);
                 self.write(addr, val)?;
                 self.pc += 2;
-                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, val, addr, res))
+                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, addr, val, res))
             }
         }
     }
 
-    /// Returns the number of bytes of the instruction, then the address to which the result
-    ///of an operation will be written
+    #[inline(always)]
     fn address_write(&mut self, a: Address, min_cycles: u16, val: u8, implied: Option<usize>) -> CPUResult<String> {
         use core::addressing::Address::*;
         use core::addressing::AddressType::*;
@@ -337,19 +364,20 @@ impl CPU {
             Specified(SingleByte(s)) => {
                 let (_extra_cyles, addr) = self.decode_single_byte(s)?;
                 self.write(addr, val)?;
-                (1, format!("{:04X}", addr))
+                (1, format!("{:?}: {:04X}", s, addr))
             },
             Specified(DoubleByte(d)) => {
                 let (_extra_cycles, addr) = self.decode_double_byte(d)?;
                 self.write(addr, val)?;
-                (2, format!("{:04X}", addr))
+                (2, format!("{:?}: {:04X}", d, addr))
             },
         };
         self.counter += min_cycles;
         self.pc += bytes;
         Ok(format!("Stored {:02X} into {}", val, msg))
     }
-
+    
+    #[inline(always)]
     fn execute(&mut self, c: Code, a: Address, min_cycles: u16, o: u8) -> CPUResult<String> {
         match c {
             Code::LDA => self.load(a, min_cycles, ACCUMULATOR),
@@ -405,30 +433,10 @@ impl CPU {
                 cpu.set_czn(res, next_carry);
                 res
             }),
-
-            c @ Code::AND | c @ Code::ORA | c @ Code::EOR => {
-                let (bytes, extra_cycles, val) = self.address_read(a, None)?;
-                let msg = match c {
-                    Code::AND => {
-                        self.axy_registers[ACCUMULATOR] &= val;
-                        format!("Logical AND result: {:02X}", val)
-                    },
-                    Code::EOR => {
-                        self.axy_registers[ACCUMULATOR] ^= val;
-                        format!("Logical EOR result: {:02X}", val)
-                    },
-                    Code::ORA => {
-                        self.axy_registers[ACCUMULATOR] |= val;
-                        format!("Logical ORA result: {:02X}", val)
-                    },
-                    x => panic!(format!("Unexpected {:?}", x))
-                };
-                let res = self.axy_registers[ACCUMULATOR];
-                self.set_zn(res);
-                self.pc += bytes;
-                self.counter += min_cycles + extra_cycles;
-                Ok(msg)
-            },
+            //    fn bitwise(&mut self, a: Address, min_cycles: u16, op: &Fn(u8, u8) -> u8, msg: &str) -> CPUResult<String> {
+            Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }, "Logical AND"),
+            Code::EOR => self.bitwise(a, min_cycles, &|acc, x| { acc ^ x }, "Logical EOR"),
+            Code::ORA => self.bitwise(a, min_cycles, &|acc, x| { acc | x }, "Logical ORA"),
 
             Code::CMP => self.cmp(a, min_cycles, ACCUMULATOR),
             Code::CPX => self.cmp(a, min_cycles, X),
@@ -513,6 +521,7 @@ impl CPU {
             },
             Code::TSX => {
                 let val = self.stack_pop()?;
+                println!("Popped x ({:02X}) from stack", val);
                 self.axy_registers[X] = val;
                 self.set_zn(val);
                 Ok(format!("Popped from the stack to X"))
@@ -520,14 +529,16 @@ impl CPU {
             Code::TXS => {
                 let val = self.axy_registers[X];
                 self.stack_push(val)?;
+                println!("Pushed {:02X} to stack", val);
                 self.counter += min_cycles;
-                Ok(format!("Pushed x to stack"))
+                Ok(format!("Pushed x ({:02X}) to stack", val))
             },
             
             Code::PHA => {
                 self.counter += min_cycles;
                 let val = self.axy_registers[ACCUMULATOR];
                 self.stack_push(val)?;
+                println!("Pushed acc ({:02X}) to stack", val);
                 Ok(format!("Pushed accumulator to stack"))
             },
             Code::PLA => {
@@ -535,18 +546,21 @@ impl CPU {
                 let acc = self.stack_pop()?;
                 self.set_zn(acc);
                 self.axy_registers[ACCUMULATOR] = acc;
+                println!("Pulled acc ({:02X}) from stack", acc);
                 Ok(format!("Pulled accumulator from stack"))
             },
             Code::PHP => {
                 self.counter += min_cycles;
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)?;
+                println!("Pushed flags ({:02X}) to stack", flags.bits);
                 Ok(format!("Pushed status onto stack"))
             },
             Code::PLP => {
                 self.counter += min_cycles;
                 let flags = self.stack_pop()?;
                 self.status_register.bits |= flags;
+                println!("Popped flags ({:02X}) from stack", flags);
                 Ok(format!("Pulled processor flags from stack"))
             },
             
@@ -558,14 +572,14 @@ impl CPU {
                         let real_addr = self.read_two_bytes(addr)?;
                         self.counter += min_cycles;
                         self.pc = real_addr;
-                        Ok(format!("Set pc to ${:04X}", real_addr))
+                        Ok(format!("Set pc Indirect ${:04X} to ${:04X}", addr, real_addr))
                     },
                     Specified(DoubleByte(Absolute)) => {
                         let pc = self.pc;
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
                         self.pc = addr;
-                        Ok(format!("Set pc to ${:04X}", addr))
+                        Ok(format!("Set pc to absolute ${:04X}", addr))
                     }
                     _ => Err(format!("JMP doesn't use {:?}", a))
                 }
@@ -576,7 +590,8 @@ impl CPU {
                         let pc = self.pc;
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
-                        let ret_addr = self.pc + 2 - 1;
+                        let ret_addr = pc + 2;
+                        println!("Jumping to subroutine at {:04X} with ret addr {:04X}", addr, ret_addr);
                         self.stack_push_double(ret_addr)?;
                         self.pc = addr;
                         Ok(format!("Pushed ${:04X} onto stack and set pc to {:04X}.", ret_addr, addr))
@@ -586,8 +601,9 @@ impl CPU {
             },
             Code::RTS => {
                 let addr = self.stack_pop_double()?;
-                self.pc = addr + 1;
+                self.pc = addr;
                 self.counter += min_cycles;
+                println!("returned to {:04X}", addr);
                 Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
             Code::RTI => {
@@ -613,7 +629,8 @@ impl CPU {
                 Ok(format!("NOP"))
             },
             Code::BRK => {
-                self.counter += 7;
+                self.counter += min_cycles;
+                //let addr = self.pc + 1; // Padding byte.
                 let addr = self.pc;
                 self.stack_push_double(addr)?;
                 
@@ -661,52 +678,30 @@ impl CPU {
         }
     }
 
-    fn stack_decrement(&mut self) -> CPUResult<()> {
-        if self.stack_pointer == 0 {
-            Err(format!("Stack underflow!"))
-        } else {
-            self.stack_pointer -= 1;
-            Ok(())
-        }
-    }
-
-    fn stack_increment(&mut self) -> CPUResult<()> {
-        if self.stack_pointer == 255 {
-            Err(format!("Stack overflow!"))
-        } else {
-            self.stack_pointer += 1;
-            Ok(())
-        }
-    }
-    
+    #[inline(always)]
     fn stack_push(&mut self, val: u8) -> CPUResult<String> {
         let addr = (self.stack_pointer as u16) + STACK_REGION;
-        match self.write(addr, val) {
-            Ok(s) => {
-                self.stack_decrement()?;
-                Ok(s)
-            },
-            Err(f) => Err(f)
-        }
+        let new_sp = self.stack_pointer.wrapping_sub(1);
+        self.stack_pointer = new_sp;
+        self.write(addr, val)
     }
-
+    
+    #[inline(always)]
     fn stack_push_double(&mut self, val: u16) -> CPUResult<String> {
         let (lower, upper) = split(val);
         self.stack_push(upper)?;
         self.stack_push(lower)
     }
 
+    #[inline(always)]
     fn stack_pop(&mut self) -> CPUResult<u8> {
-        let addr = (self.stack_pointer as u16) + STACK_REGION;
-        match self.read(addr) {
-            Ok(u) => {
-                self.stack_increment()?;
-                Ok(u)
-            },
-            Err(f) => Err(f)
-        }
+        let new_sp = self.stack_pointer.wrapping_add(1);
+        let addr = (new_sp as u16)  + STACK_REGION;
+        self.stack_pointer = new_sp;
+        self.read(addr)
     }
 
+    #[inline(always)]
     fn stack_pop_double(&mut self) -> CPUResult<u16> {
         let lower = self.stack_pop()?;
         let upper = self.stack_pop()?;
@@ -714,6 +709,7 @@ impl CPU {
         Ok(val)
     }
 
+    #[inline(always)]
     fn load(&mut self, a: Address, min_cycles: u16, r: usize) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
         self.set_zn(val);
@@ -722,6 +718,7 @@ impl CPU {
         Ok(format!("Loaded ({:08b}) into axy register {}", val, r))
     }
 
+    #[inline(always)]
     fn inc(&mut self, a: Address, min_cycles: u16, implied: Option<usize>) -> CPUResult<String> {
         let msg = "Incremented ";
         self.address_read_modify_write(a, min_cycles, msg, implied, &|cpu, x| {
@@ -731,6 +728,7 @@ impl CPU {
         })
     }
 
+    #[inline(always)]
     fn dec(&mut self, a: Address, min_cycles: u16, implied: Option<usize>) -> CPUResult<String> {
        let msg = "Decremented ";
        self.address_read_modify_write(a, min_cycles, msg, implied, &|cpu, x| {
@@ -739,7 +737,8 @@ impl CPU {
            res
         })
     }
-    
+
+    #[inline(always)]
     fn add(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
         let carry = self.status_register.get_flag(StatusFlags::C).bits;
@@ -753,6 +752,7 @@ impl CPU {
                    rhs.wrapping_add(carry), res, next_carry))
     }
 
+    #[inline(always)]
     fn sub(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
         let carry = self.status_register.get_flag(StatusFlags::C).bits;
@@ -766,26 +766,31 @@ impl CPU {
                    rhs, res, next_carry, overflow))
     }
 
+    #[inline(always)]
     fn set_flag_op(&mut self, flag: StatusFlags) {
         self.status_register |= flag;
     }
 
+    #[inline(always)]
     fn clear_flag_op(&mut self, flag: StatusFlags) {
         self.status_register &= !flag;
     }
 
+    #[inline(always)]
     fn set_flag(&mut self, min_cycles: u16, flag: StatusFlags) -> CPUResult<String> {
         self.counter += min_cycles;
         self.set_flag_op(flag);
         Ok(format!("Set {:?}", flag))
     }
 
+    #[inline(always)]
     fn clear_flag(&mut self, min_cycles: u16, flag: StatusFlags) -> CPUResult<String> {
         self.counter += min_cycles;
         self.clear_flag_op(flag);
         Ok(format!("Cleared {:?}", flag))
     }
 
+    #[inline(always)]
     fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, cond: bool) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
         if cond {
@@ -804,6 +809,7 @@ impl CPU {
         }
     }
 
+    #[inline(always)]
     fn cmp(&mut self, a: Address, min_cycles: u16, lhs_idx: usize) -> CPUResult<String> {
         let lhs = self.axy_registers[lhs_idx];
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
@@ -814,6 +820,18 @@ impl CPU {
         Ok(format!("Compared {} to {} for result {:?}", lhs, val, self.status_register))
     }
 
+    #[inline(always)]
+    fn bitwise(&mut self, a: Address, min_cycles: u16, op: &Fn(u8, u8) -> u8, msg: &str) -> CPUResult<String> {
+        let (bytes, extra_cycles, val) = self.address_read(a, None)?;
+        let acc = self.axy_registers[ACCUMULATOR];
+        let res = op(acc, val);
+        self.axy_registers[ACCUMULATOR] = res;
+        self.set_zn(res);
+        self.modify_pc_counter(bytes, min_cycles);
+        Ok(format!("{} by {:02X}", msg, val))
+    }
+
+    #[inline(always)]
     fn modify_pc_counter(&mut self, bytes: u16, cycles: u16) {
         self.pc += bytes;
         self.counter += cycles;
