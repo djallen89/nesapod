@@ -269,7 +269,7 @@ impl INES {
                     0x0000 ... 0x401F => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
                     0x4020 ... 0x5999 => panic!(format!("Can't write to {:04X}; no effect on any register", idx)),
                     0x6000 ... 0x7FFF => {
-                        if sxrom.prg_ram_enabled() {
+                        if true { // sxrom.prg_ram_enabled() {
                             self.prg_ram[(idx - 0x6000) as usize] = val;
                             Ok(format!("Wrote {:02X} to address {:04X}", val, idx))
                         } else {
@@ -284,7 +284,11 @@ impl INES {
         }
     }
 
-    pub fn ppu_read(&self) {
+    pub fn ppu_read(&self, idx: u16) -> u16 {
+        match self.mapper {
+            Mapper::NROM => idx,
+            _ => idx
+        }            
     }
     
     pub fn ppu_write(&self) {

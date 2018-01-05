@@ -6,4 +6,3 @@ pub mod ppu;
 pub mod apu;
 
 pub use self::debug::Debug;
-

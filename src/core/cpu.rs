@@ -10,7 +10,7 @@ use core::addressing::DoubleType::*;
 pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
-pub const FRAME_TIMING: u16 = 29780;
+pub const FRAME_TIMING: u16 = 29781;
 pub const RESET_VECTOR: u16 = 0xFFFC;
 pub const IRQ_VECTOR: u16 = 0xFFFE;
 pub const STACK_REGION: u16 = 0x0100;
@@ -116,7 +116,7 @@ pub struct CPU {
     status_register: StatusFlags,
     ram: [u8; 2048],
     ppu: PPU,
-    cartridge: INES,
+    cartridge: INES
 }
 
 impl fmt::Display for CPU {
@@ -160,6 +160,7 @@ impl CPU {
         let opcode = self.read(addr)?;
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
         if self.counter >= FRAME_TIMING - 7 {
+            self.ppu.render(&mut self.cartridge);
             self.counter = 0; 
         }
         let next = self.pc.wrapping_add(1);
@@ -433,7 +434,7 @@ impl CPU {
                 cpu.set_czn(res, next_carry);
                 res
             }),
-            //    fn bitwise(&mut self, a: Address, min_cycles: u16, op: &Fn(u8, u8) -> u8, msg: &str) -> CPUResult<String> {
+
             Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }, "Logical AND"),
             Code::EOR => self.bitwise(a, min_cycles, &|acc, x| { acc ^ x }, "Logical EOR"),
             Code::ORA => self.bitwise(a, min_cycles, &|acc, x| { acc | x }, "Logical ORA"),
@@ -520,25 +521,22 @@ impl CPU {
 
             },
             Code::TSX => {
-                let val = self.stack_pop()?;
-                println!("Popped x ({:02X}) from stack", val);
+                let val = self.stack_pointer;
                 self.axy_registers[X] = val;
                 self.set_zn(val);
-                Ok(format!("Popped from the stack to X"))
+                Ok(format!("Copied stack register to X"))
             },
             Code::TXS => {
                 let val = self.axy_registers[X];
-                self.stack_push(val)?;
-                println!("Pushed {:02X} to stack", val);
+                self.stack_pointer = val;
                 self.counter += min_cycles;
-                Ok(format!("Pushed x ({:02X}) to stack", val))
+                Ok(format!("Copied X to stack pointer"))
             },
             
             Code::PHA => {
                 self.counter += min_cycles;
                 let val = self.axy_registers[ACCUMULATOR];
                 self.stack_push(val)?;
-                println!("Pushed acc ({:02X}) to stack", val);
                 Ok(format!("Pushed accumulator to stack"))
             },
             Code::PLA => {
@@ -546,21 +544,18 @@ impl CPU {
                 let acc = self.stack_pop()?;
                 self.set_zn(acc);
                 self.axy_registers[ACCUMULATOR] = acc;
-                println!("Pulled acc ({:02X}) from stack", acc);
                 Ok(format!("Pulled accumulator from stack"))
             },
             Code::PHP => {
                 self.counter += min_cycles;
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)?;
-                println!("Pushed flags ({:02X}) to stack", flags.bits);
                 Ok(format!("Pushed status onto stack"))
             },
             Code::PLP => {
                 self.counter += min_cycles;
                 let flags = self.stack_pop()?;
                 self.status_register.bits |= flags;
-                println!("Popped flags ({:02X}) from stack", flags);
                 Ok(format!("Pulled processor flags from stack"))
             },
             
@@ -591,7 +586,6 @@ impl CPU {
                         let addr = self.read_two_bytes(pc)?;
                         self.counter += min_cycles;
                         let ret_addr = pc + 2;
-                        println!("Jumping to subroutine at {:04X} with ret addr {:04X}", addr, ret_addr);
                         self.stack_push_double(ret_addr)?;
                         self.pc = addr;
                         Ok(format!("Pushed ${:04X} onto stack and set pc to {:04X}.", ret_addr, addr))
@@ -603,7 +597,6 @@ impl CPU {
                 let addr = self.stack_pop_double()?;
                 self.pc = addr;
                 self.counter += min_cycles;
-                println!("returned to {:04X}", addr);
                 Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
             Code::RTI => {

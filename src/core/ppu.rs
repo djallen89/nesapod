@@ -1,3 +1,5 @@
+use core::ines::INES;
+
 pub const VISIBLE_SCANLINES: usize = 240;
 pub const PRE_VBLANK_LINE: usize = 1;
 pub const VBLANK_LINES: usize = 20;
@@ -64,6 +66,9 @@ pub struct PPU {
     vram_addr: u16,
     video_ram: [u8; 2048],
     oam_ram: [u8; 256],
+    cycles: u32,
+    even_frame: bool,
+    
 }
 
 impl PPU {
@@ -81,12 +86,18 @@ impl PPU {
             oam_dma: 0,
             vram_addr: 0,
             video_ram: [0xFF; 2048],
-            oam_ram: [0x00; 256]
+            oam_ram: [0x00; 256],
+            cycles: 0,
+            even_frame: true
         }
     }
 
     fn _reset() {
         
+    }
+
+    pub fn is_vblank(&self) -> bool {
+        self.ppu_status & PPUSTATUS::VBLANK == PPUSTATUS::VBLANK
     }
 
     pub fn read(&mut self, address: u16) -> u8 {
@@ -142,5 +153,21 @@ impl PPU {
     fn vram_increment(&mut self) {
         let inc = (self.ppu_ctrl & PPUCTRL::VRAM_INCREMENT).bits as u16;
         self.vram_addr += inc
+    }
+
+    fn read_internal(&self, idx: u16, cart: &mut INES) -> u8 {
+        1
+    }
+
+    fn oam_read(&self, idx: u8) -> u8 {
+        1
+    }
+
+    fn prerender(&mut self, cart: &mut INES) {
+        
+    }
+
+    pub fn render(&mut self, cart: &mut INES) {
+        self.prerender(cart);
     }
 }

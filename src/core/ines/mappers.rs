@@ -92,6 +92,14 @@ pub mod sxrom {
             }
         }
 
+        pub fn chr_read(&self, idx: u16) -> usize {
+            if self.chr_switch_4 {
+                1
+            } else {
+                0
+            }
+        }
+
         pub fn write(&mut self, addr: u16, val: u8) -> CPUResult<String> {
             let len = self.sr_len();
             if len < 4 {
