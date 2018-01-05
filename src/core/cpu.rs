@@ -168,14 +168,6 @@ impl CPU {
         self.execute(code, address, cycles, opcode)
     }
 
-    pub fn rewind_pc(&mut self) {
-        self.pc -= 1;
-    }
-
-    pub fn step_pc(&mut self) {
-        self.pc += 1;
-    }
-
     #[inline(always)]
     pub fn read(&mut self, address: u16) -> CPUResult<u8> {
         match address {
@@ -422,7 +414,7 @@ impl CPU {
             }),
             Code::ROL => self.address_read_modify_write(a, min_cycles, "Rotated left", Some(ACCUMULATOR), &|cpu, x| {
                 let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
-                let next_carry = (x & 0b1000_0000) == 0b0000_0001;
+                let next_carry = (x & 0b1000_0000) == 0b1000_0000;
                 let res = (x << 1) + (old_carry >> StatusFlags::flag_position(StatusFlags::C));
                 cpu.set_czn(res, next_carry);
                 res
