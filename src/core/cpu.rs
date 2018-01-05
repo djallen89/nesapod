@@ -436,10 +436,16 @@ impl CPU {
             
             Code::BIT => {
                 let (bytes, extra_cycles, val) = self.address_read(a, None)?;
-                self.status_register.bits |= (self.axy_registers[ACCUMULATOR] & val) & 0b1100_0000;
+                let zero = self.axy_registers[ACCUMULATOR] & val == 0;
+                self.status_register.bits |= val & 0b1100_0000;
+                if zero {
+                    self.set_flag_op(StatusFlags::Z)
+                } else {
+                    self.clear_flag_op(StatusFlags::Z)
+                }
                 self.counter += min_cycles + extra_cycles;
                 self.pc += bytes;
-                Ok(format!("Set V and C {}", self.status_register.bits & 0b1100_0000))
+                Ok(format!("BIT tested {:08b}", val))
             },
             
             Code::BCC => {

@@ -9,8 +9,8 @@ use core::ines::INES;
 use core::cpu::CPU;
 
 pub fn main(logging: bool, rom: Option<String>) {
-    const WIDTH: u32 = 1600;
-    const HEIGHT: u32 = 800;
+    const WIDTH: u32 = 1200;
+    const HEIGHT: u32 = 900;
 
     let mut debugger = core::Debug::new(32, logging);
     let romname = match rom {
@@ -20,8 +20,8 @@ pub fn main(logging: bool, rom: Option<String>) {
     
     let ines = match INES::new(&romname) {
         Ok(r) => {
-            debugger.input_ln(&format!("Successfully loaded ROM of size {}", r.size()));
-            debugger.input_ln(&format!("Mapper Id: {}", r.mapper()));
+            debugger.input(&format!("Successfully loaded ROM of size {}\n", r.size()));
+            debugger.input(&format!("Mapper Id: {}\n", r.mapper()));
             r
         },
         Err(f) => {
@@ -30,8 +30,8 @@ pub fn main(logging: bool, rom: Option<String>) {
     };
     let mut emulator = CPU::power_up(ines);
     match emulator.init() {
-        Ok(r) => debugger.input_ln(&r),
-        Err(f) => debugger.input_ln(&f)
+        Ok(r) => debugger.input(&format!("{}\n", r)),
+        Err(f) => debugger.input(&format!("{}\n", f))
     }
     debugger.input(&format!("{}", emulator));
 
@@ -182,7 +182,7 @@ pub fn main(logging: bool, rom: Option<String>) {
 
     let _ines = emulator.shut_down();
 
-    match debugger.flush() {
+    match debugger.flush_all() {
         Ok(_) => {}
         Err(f) => panic!(f)
     }
