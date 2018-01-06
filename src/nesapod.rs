@@ -19,15 +19,10 @@ pub fn main(logging: bool, rom: Option<String>) {
     };
     
     let ines = match INES::new(&romname) {
-        Ok(r) => {
-            debugger.input(&format!("Successfully loaded ROM of size {}\n", r.size()));
-            debugger.input(&format!("Mapper Id: {}\n", r.mapper()));
-            r
-        },
-        Err(f) => {
-            panic!(f);
-        }
+        Ok(r) => r,
+        Err(f) => panic!(f)
     };
+    
     let mut emulator = match CPU::power_up(ines) {
         Ok(emu) => emu,
         Err(f) => panic!(f)

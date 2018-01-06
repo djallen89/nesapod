@@ -120,7 +120,7 @@ pub struct CPU {
 
 impl fmt::Display for CPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let spaces1: String = iter::repeat(' ').take(18 - self.last_read_bytes.len()).collect();
+        let spaces1: String = iter::repeat(' ').take(16 - self.last_read_bytes.len()).collect();
         let spaces2: String = iter::repeat(' ').take(32 - self.last_instr.len()).collect();
         write!(f, "{}{}{}{}", self.last_read_bytes, spaces1, self.last_instr, spaces2)?;
         write!(f, "{}", self.last_registers)
@@ -141,9 +141,8 @@ impl CPU {
             cartridge: ines,
             last_read_bytes: format!(""),
             last_instr: format!(""),
-            last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:  {}",
-                                    0, 0, 0, (StatusFlags::I | StatusFlags::S).bits,
-                                    POWERUP_S, 0)
+            last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
+                                    0, 0, 0, (StatusFlags::I | StatusFlags::S).bits, POWERUP_S)
 
         })
     }
@@ -166,10 +165,10 @@ impl CPU {
 
     pub fn step(&mut self) -> CPUResult<String> {
         self.last_instr = format!("");
-        let last_registers = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:  {}",
+        let last_registers = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
                                      self.axy_registers[ACCUMULATOR], self.axy_registers[X],
                                      self.axy_registers[Y], self.status_register.bits,
-                                     self.stack_pointer, self.counter * 3);
+                                     self.stack_pointer);
         self.last_registers = last_registers;
         let addr = self.pc;
         let opcode = self.read(addr)?;
@@ -206,13 +205,16 @@ impl CPU {
 
     #[inline(always)]
     pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
-        self.last_instr.push_str(&format!("= {:02X}", val));
         match address as usize {
             0x0000 ... 0x1FFF => {
+                let pre = self.ram[(address % 2048) as usize];
+                self.last_instr.push_str(&format!("= {:02X}", pre));
                 self.ram[(address % 2048) as usize] = val;
                 Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
             0x2000 ... 0x3FFF => {
+                let pre = self.ppu.read(address);
+                self.last_instr.push_str(&format!("= {:02X}", pre));
                 self.ppu.write(address, val);
                 Ok(format!("Wrote {:02X} to PPU register 0x200{}", val, address % 8))
             },
@@ -226,11 +228,17 @@ impl CPU {
                 Ok(format!("Wrote {:04X} to {:04X} to PPU OAM", page, page + 255))
             }
             0x4000 ... 0x4013 | 0x4015 ... 0x4017 => {
+                let pre = self.aio_registers[(address - 0x4000) as usize];
+                self.last_instr.push_str(&format!("= {:02X}", pre));
                 self.aio_registers[(address - 0x4000) as usize] = val;
                 Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
             0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
-            0x4020 ... 0xFFFF => self.cartridge.write(address, val),
+            0x4020 ... 0xFFFF => {
+                let pre = self.cartridge.read(address)?;
+                self.last_instr.push_str(&format!("= {:02X}", pre));
+                self.cartridge.write(address, val)
+            },
             _ => Err(format!("I dunno lol"))
         }
     }
@@ -482,6 +490,7 @@ impl CPU {
             
             Code::BIT => {
                 let (bytes, extra_cycles, val) = self.address_read(a, None)?;
+                self.last_instr.push_str(&format!("= {:02X}", val));
                 let zero = self.axy_registers[ACCUMULATOR] & val == 0;
                 let n = (val & 0b1000_0000) == 0b1000_0000;
                 let v = (val & 0b0100_0000) == 0b0100_0000;
@@ -610,7 +619,7 @@ impl CPU {
             Code::JMP => {
                 let pc = self.pc;
                 let addr = self.read_two_bytes(pc)?;
-                self.last_read_bytes.push_str(&format!("{:02X} {:02X} ", addr & 0xFF, addr >> 8));
+                self.last_read_bytes.push_str(&format!("{:02X} {:02X}", addr & 0xFF, addr >> 8));
                 match a {
                     Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)) => {
                         self.last_instr.push_str(&format!("(${:04X}) ", addr));
@@ -670,7 +679,6 @@ impl CPU {
             
             Code::NOP => {
                 self.counter += min_cycles;
-                self.last_read_bytes.push_str("        ");
                 Ok(format!("NOP"))
             },
             Code::BRK => {
@@ -784,32 +792,36 @@ impl CPU {
         })
     }
 
+    fn adc(&self, rhs: u8) -> (u8, bool, bool) {
+        let carry = self.status_register.get_flag(StatusFlags::C).bits;
+        let lhs = self.axy_registers[ACCUMULATOR];
+        let next_carry = (rhs == 255 && carry == 1) || u8::MAX - rhs - carry < lhs;
+        let res = lhs.wrapping_add(rhs.wrapping_add(carry));
+        let overflow = ((!(lhs ^ rhs) & 0b1000_0000) == 0b1000_0000) &&
+            ((lhs ^ res) & 0b1000_0000) == 0b1000_0000;
+        (res, next_carry, overflow)
+    }
+
     #[inline(always)]
     fn add(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
-        let carry = self.status_register.get_flag(StatusFlags::C).bits;
-        let next_carry = (rhs == 255 && carry == 1) || u8::MAX - rhs - carry > self.axy_registers[ACCUMULATOR];
-        let res = self.axy_registers[ACCUMULATOR].wrapping_add(rhs.wrapping_add(carry));
-        let overflow = ((self.axy_registers[ACCUMULATOR] ^ res) & 0x80) != 0;
+        let (res, next_carry, overflow) = self.adc(rhs);
         self.set_cznv(res, next_carry, overflow);
         self.axy_registers[ACCUMULATOR] = res;
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Added {} to accumulator for {} with carry {}",
-                   rhs.wrapping_add(carry), res, next_carry))
+                   rhs, res, next_carry))
     }
 
     #[inline(always)]
     fn sub(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
-        let carry = self.status_register.get_flag(StatusFlags::C).bits;
-        let next_carry = (rhs == 255 && carry == 1) || self.axy_registers[ACCUMULATOR] < (rhs + carry);
-        let res = self.axy_registers[ACCUMULATOR].wrapping_sub(rhs.wrapping_add(carry));
-        let overflow = ((self.axy_registers[ACCUMULATOR] ^ (255 - res)) & 0x80) != 0;
-        self.set_cznv(res, !next_carry, overflow);
+        let (res, next_carry, overflow) = self.adc(!rhs);
+        self.set_cznv(res, next_carry, overflow);
         self.axy_registers[ACCUMULATOR] = res;
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Subtracted {} from accumulator for result {} with carry: {} and overflow: {} ",
-                   rhs, res, next_carry, overflow))
+                   rhs, res, !next_carry, overflow))
     }
 
     #[inline(always)]
