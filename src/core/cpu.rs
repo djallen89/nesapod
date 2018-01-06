@@ -176,7 +176,7 @@ impl CPU {
         self.last_read_bytes = format!("{:04X}  {:02X} ", addr, opcode);
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
         self.last_instr = format!("{:?} ", code);
-        if self.counter >= FRAME_TIMING - 7 {
+        if self.counter >= (FRAME_TIMING - 7) / 3 {
             self.ppu.render(&mut self.cartridge);
             self.counter = 0; 
         }
@@ -483,7 +483,18 @@ impl CPU {
             Code::BIT => {
                 let (bytes, extra_cycles, val) = self.address_read(a, None)?;
                 let zero = self.axy_registers[ACCUMULATOR] & val == 0;
-                self.status_register.bits |= val & 0b1100_0000;
+                let n = (val & 0b1000_0000) == 0b1000_0000;
+                let v = (val & 0b0100_0000) == 0b0100_0000;
+                if n {
+                    self.set_flag_op(StatusFlags::N)
+                } else {
+                    self.clear_flag_op(StatusFlags::N)
+                }
+                if v {
+                    self.set_flag_op(StatusFlags::V)
+                } else {
+                    self.clear_flag_op(StatusFlags::V)
+                }
                 if zero {
                     self.set_flag_op(StatusFlags::Z)
                 } else {
