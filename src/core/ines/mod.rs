@@ -224,6 +224,15 @@ impl INES {
         self.prg_rom_size + self.chr_mem_size
     }
 
+    pub fn dump_ram(&self, idx: usize) -> String {
+        let status = self.prg_ram[0] as usize;
+        let msg: String = self.prg_ram[idx - 0x5FFF .. self.prg_ram.len()].iter()
+            .take_while(|&x| *x != 0 )
+            .map(|&x| x as char)
+            .collect();
+        format!("\n{}: {}\n", status, msg)
+    }
+
     pub fn read(&self, idx: u16) -> CPUResult<u8> {
         match self.mapper {
             Mapper::NROM => {
@@ -243,7 +252,7 @@ impl INES {
                     0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
                     x => {
                         let addr = sxrom.prg_read(idx) - 0x8000;
-                        Ok(self.prg_rom[addr])
+                        Ok(self.prg_rom[addr % self.prg_rom_size])
                     }
                 }
             },

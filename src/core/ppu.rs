@@ -152,7 +152,10 @@ impl PPU {
 
     fn vram_increment(&mut self) {
         let inc = (self.ppu_ctrl & PPUCTRL::VRAM_INCREMENT).bits as u16;
-        self.vram_addr += inc
+        self.vram_addr += inc;
+        if self.vram_addr >= 2048 {
+            self.vram_addr -= 2048
+        }
     }
 
     fn read_internal(&self, idx: u16, cart: &mut INES) -> u8 {

@@ -32,8 +32,7 @@ pub fn main(logging: bool, rom: Option<String>) {
         Ok(emu) => emu,
         Err(f) => panic!(f)
     };
-    debugger.input(&format!("{}", emulator));
-
+    
 
     let mut events_loop = glium::glutin::EventsLoop::new();
     let window = glium::glutin::WindowBuilder::new()
@@ -126,14 +125,15 @@ pub fn main(logging: bool, rom: Option<String>) {
                                 &VirtualKeyCode::F => 15,
                                 &VirtualKeyCode::Z => 255,
                                 &VirtualKeyCode::L => 1023,
+                                &VirtualKeyCode::T => 1 << 15,
                                 _ => 0
                             };
                             while steps > 0 {
                                 match emulator.step() {
-                                    Ok(x)  => debugger.input(&format!("    {}\n{}", x, emulator)),
+                                    Ok(_)  => debugger.input(&format!("{}\n", emulator)),
                                     Err(f) => {
                                         pancurses::beep();
-                                        debugger.input(&format!(" ERROR: {}\n{}", f, emulator));
+                                        debugger.input(&format!(" ERROR: {}\n{}\n", f, emulator));
                                         break
                                     }
                                 }
@@ -160,6 +160,9 @@ pub fn main(logging: bool, rom: Option<String>) {
             let ui = &mut ui.set_widgets();
 
             // Message displayed in middle of screen
+            //let msg = emulator.dump_ram(0x6004);
+            //debugger.input(&msg);
+            //println!("{}", msg);
             let msg = debugger.output();
             widget::Text::new(&msg)
                 .mid_left_of(ui.window)
@@ -177,6 +180,9 @@ pub fn main(logging: bool, rom: Option<String>) {
             target.finish().unwrap();
         }
     }
+
+    //let dump = emulator.dump_ram(0x6004);
+    //debugger.input(&dump);
 
     let _ines = emulator.shut_down();
 

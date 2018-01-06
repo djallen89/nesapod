@@ -1,11 +1,7 @@
-use std::{u8, u16, fmt};
+use std::{i8, u8, u16, fmt, iter};
 use core::ppu::PPU;
 use core::ines::INES;
-use core::addressing::{OPCODE_TABLE, Address, SingleType, DoubleType};
-use core::addressing::Address::*;
-use core::addressing::AddressType::*;
-use core::addressing::SingleType::*;
-use core::addressing::DoubleType::*;
+use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleType};
 
 pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
@@ -116,23 +112,26 @@ pub struct CPU {
     status_register: StatusFlags,
     ram: [u8; 2048],
     ppu: PPU,
-    cartridge: INES
+    cartridge: INES,
+    last_read_bytes: String,
+    last_instr: String,
+    last_registers: String,
 }
 
 impl fmt::Display for CPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "counter: {:04X} pc: {:04X} ", self.counter, self.pc)?;
-        write!(f, "sp: {:02X} acc: {:02X} x: {:02X} ",
-               self.stack_pointer, self.axy_registers[ACCUMULATOR], self.axy_registers[X])?;
-        write!(f, "y: {:02X} flags: {:?}", self.axy_registers[Y], self.status_register)
+        let spaces1: String = iter::repeat(' ').take(18 - self.last_read_bytes.len()).collect();
+        let spaces2: String = iter::repeat(' ').take(32 - self.last_instr.len()).collect();
+        write!(f, "{}{}{}{}", self.last_read_bytes, spaces1, self.last_instr, spaces2)?;
+        write!(f, "{}", self.last_registers)
     }
 }
 
 impl CPU {
     pub fn power_up(ines: INES) -> Result<CPU, String> {
-        let mut cpu = CPU {
+        Ok(CPU {
             counter: 0,
-            pc: RESET_VECTOR,
+            pc: 0xC000,
             stack_pointer: POWERUP_S,
             axy_registers: vec![0, 0, 0],
             aio_registers: vec![0; 32],
@@ -140,32 +139,50 @@ impl CPU {
             ram: [0; 2048],
             ppu: PPU::init(),
             cartridge: ines,
-        };
-        cpu.reset()?;
-        Ok(cpu)
+            last_read_bytes: format!(""),
+            last_instr: format!(""),
+            last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:  {}",
+                                    0, 0, 0, (StatusFlags::I | StatusFlags::S).bits,
+                                    POWERUP_S, 0)
+
+        })
     }
 
     pub fn reset(&mut self) -> CPUResult<String> {
         self.stack_pointer -= 3;
+        self.pc = 0xC000;
         self.status_register = self.status_register | StatusFlags::I;
-        self.execute(Code::JMP, Specified(DoubleByte(Absolute)), 5, 0x6C)
+        self.step()
+        //self.execute(Code::JMP, Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)), 5)
     }
 
     pub fn shut_down(self) -> INES {
         self.cartridge
     }
 
+    pub fn dump_ram(&self, idx: usize) -> String {
+        self.cartridge.dump_ram(idx)
+    }
+
     pub fn step(&mut self) -> CPUResult<String> {
+        self.last_instr = format!("");
+        let last_registers = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} CYC:  {}",
+                                     self.axy_registers[ACCUMULATOR], self.axy_registers[X],
+                                     self.axy_registers[Y], self.status_register.bits,
+                                     self.stack_pointer, self.counter * 3);
+        self.last_registers = last_registers;
         let addr = self.pc;
         let opcode = self.read(addr)?;
+        self.last_read_bytes = format!("{:04X}  {:02X} ", addr, opcode);
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
+        self.last_instr = format!("{:?} ", code);
         if self.counter >= FRAME_TIMING - 7 {
             self.ppu.render(&mut self.cartridge);
             self.counter = 0; 
         }
-        let next = self.pc.wrapping_add(1);
-        self.pc = next;
-        self.execute(code, address, cycles, opcode)
+        let val = self.pc;
+        self.pc = val.wrapping_add(1);
+        self.execute(code, address, cycles)
     }
 
     #[inline(always)]
@@ -189,6 +206,7 @@ impl CPU {
 
     #[inline(always)]
     pub fn write(&mut self, address: u16, val: u8) -> CPUResult<String> {
+        self.last_instr.push_str(&format!("= {:02X}", val));
         match address as usize {
             0x0000 ... 0x1FFF => {
                 self.ram[(address % 2048) as usize] = val;
@@ -221,18 +239,30 @@ impl CPU {
     fn decode_single_byte(&mut self, s: SingleType) -> CPUResult<(u16, u16)> {
         let pc = self.pc;
         let addr = self.read(pc)?;
+        self.last_read_bytes.push_str(&format!("{:02X} ", addr));
         match s {
-            SingleType::ZeroPg => Ok((0, addr as u16)),
-            SingleType::ZeroPgX => Ok((0, self.axy_registers[X].wrapping_add(addr) as u16)),
-            SingleType::ZeroPgY => Ok((0, self.axy_registers[Y].wrapping_add(addr) as u16)),
+            SingleType::ZeroPg => {
+                self.last_instr.push_str(&format!("${:02X} ", addr));
+                Ok((0, addr as u16))
+            },
+            SingleType::ZeroPgX => {
+                self.last_instr.push_str(&format!("${:02X},X ", addr));
+                Ok((0, self.axy_registers[X].wrapping_add(addr) as u16))
+            },
+            SingleType::ZeroPgY => {
+                self.last_instr.push_str(&format!("${:02X},Y ", addr));
+                Ok((0, self.axy_registers[Y].wrapping_add(addr) as u16))
+            },
             SingleType::IndirectX => {
+                self.last_instr.push_str(&format!("$({:02X},X) ", addr));
                 let real_addr = self.axy_registers[X].wrapping_add(addr) as u16;
                 Ok((0, self.read_two_bytes(real_addr)?))
             },
             SingleType::IndirectY => {
+                self.last_instr.push_str(&format!("$({:02X},Y) ", addr));
                 let pre_addr = self.read_two_bytes(addr as u16)?;
                 let extra = counter_inc(pre_addr, self.axy_registers[Y]);
-                let real_addr = (self.axy_registers[Y] as u16) + pre_addr;
+                let real_addr = (self.axy_registers[Y] as u16).wrapping_add(pre_addr);
                 Ok((extra, real_addr))
             },
             _ => panic!(format!("{:?} is not supported in decode_singlebyte", s))
@@ -243,13 +273,19 @@ impl CPU {
     fn decode_double_byte(&mut self, d: DoubleType) -> CPUResult<(u16, u16)> {
         let pc = self.pc;
         let addr = self.read_two_bytes(pc)?;
+        self.last_read_bytes.push_str(&format!("{:02X} {:02X} ", addr & 0xFF, addr >> 8));
         match d {
-            DoubleType::Absolute => Ok((0, addr)),
+            DoubleType::Absolute => {
+                self.last_instr.push_str(&format!("${:04X} ", addr));
+                Ok((0, addr))
+            },
             DoubleType::AbsoluteY => {
+                self.last_instr.push_str(&format!("${:04X},Y ", addr));
                 let extra = counter_inc(addr, self.axy_registers[X]);
                 Ok((extra, (self.axy_registers[Y] as u16) + addr))
             },
             DoubleType::AbsoluteX => {
+                self.last_instr.push_str(&format!("${:04X},X", addr));
                 let extra = counter_inc(addr, self.axy_registers[Y]);
                 Ok((extra, (self.axy_registers[X] as u16) + addr))
             },
@@ -264,21 +300,30 @@ impl CPU {
     fn address_read(&mut self, a: Address, implied: Option<usize>) -> CPUResult<(u16, u16, u8)> {
         let pc = self.pc;
         let (bytes, extra_cycles, val) = match a {
-            Invalid => panic!("Improper use of address_read: Invalid"),
-            Implied => if let Some(idx) = implied {
+            Address::Invalid => panic!("Improper use of address_read: Invalid"),
+            Address::Implied => if let Some(idx) = implied {
                 (0, 0, self.axy_registers[idx])
             } else {
                 panic!("Improper use of address read: None Implied")
             },                
-            Acc => (0, 0, self.axy_registers[ACCUMULATOR]),
-            Specified(SingleByte(Relative)) | 
-            Specified(SingleByte(Immediate)) => (1, 0, self.read(pc)?),
-            Specified(SingleByte(s)) => {
+            Address::Acc => (0, 0, self.axy_registers[ACCUMULATOR]),
+            Address::Specified(AddressType::SingleByte(SingleType::Relative)) => {
+                let val = self.read(pc)?;
+                self.last_read_bytes.push_str(&format!("{:02X} ", val));
+                (1, 0, val)
+            },
+            Address::Specified(AddressType::SingleByte(SingleType::Immediate)) => {
+                let val = self.read(pc)?;
+                self.last_read_bytes.push_str(&format!("{:02X} ", val));
+                self.last_instr.push_str(&format!("#${:02X} ", val));
+                (1, 0, val)
+            },
+            Address::Specified(AddressType::SingleByte(s)) => {
                 let (extra_cycles, addr) = self.decode_single_byte(s)?;
                 let val = self.read(addr)?;
                 (1, extra_cycles, val)
             },
-            Specified(DoubleByte(d)) => {
+            Address::Specified(AddressType::DoubleByte(d)) => {
                 let (extra_cycles, addr) = self.decode_double_byte(d)?;
                 let val = self.read(addr)?;
                 (2, extra_cycles, val)
@@ -371,7 +416,7 @@ impl CPU {
     }
     
     #[inline(always)]
-    fn execute(&mut self, c: Code, a: Address, min_cycles: u16, o: u8) -> CPUResult<String> {
+    fn execute(&mut self, c: Code, a: Address, min_cycles: u16) -> CPUResult<String> {
         match c {
             Code::LDA => self.load(a, min_cycles, ACCUMULATOR),
             Code::LDX => self.load(a, min_cycles, X),
@@ -415,14 +460,14 @@ impl CPU {
             Code::ROL => self.address_read_modify_write(a, min_cycles, "Rotated left", Some(ACCUMULATOR), &|cpu, x| {
                 let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
                 let next_carry = (x & 0b1000_0000) == 0b1000_0000;
-                let res = (x << 1) + (old_carry >> StatusFlags::flag_position(StatusFlags::C));
+                let res = (x << 1) | old_carry;
                 cpu.set_czn(res, next_carry);
                 res
             }),
             Code::ROR => self.address_read_modify_write(a, min_cycles, "Rotated right", Some(ACCUMULATOR), &|cpu, x| {
                 let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
                 let next_carry = x & 0b0000_0001 == 0b0000_0001;
-                let res = (x >> 1) + old_carry;
+                let res = (x >> 1) | (old_carry << 7);
                 cpu.set_czn(res, next_carry);
                 res
             }),
@@ -547,35 +592,38 @@ impl CPU {
             Code::PLP => {
                 self.counter += min_cycles;
                 let flags = self.stack_pop()?;
-                self.status_register.bits |= flags;
+                self.status_register.bits = flags;
                 Ok(format!("Pulled processor flags from stack"))
             },
             
             Code::JMP => {
+                let pc = self.pc;
+                let addr = self.read_two_bytes(pc)?;
+                self.last_read_bytes.push_str(&format!("{:02X} {:02X} ", addr & 0xFF, addr >> 8));
                 match a {
-                    Specified(DoubleByte(Indirect)) => {
-                        let pc = self.pc;
-                        let addr = self.read_two_bytes(pc)?;
+                    Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)) => {
+                        self.last_instr.push_str(&format!("(${:04X}) ", addr));
                         let real_addr = self.read_two_bytes(addr)?;
                         self.counter += min_cycles;
                         self.pc = real_addr;
                         Ok(format!("Set pc Indirect ${:04X} to ${:04X}", addr, real_addr))
                     },
-                    Specified(DoubleByte(Absolute)) => {
-                        let pc = self.pc;
-                        let addr = self.read_two_bytes(pc)?;
+                    Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
+                        self.last_instr.push_str(&format!("${:04X} ", addr));
                         self.counter += min_cycles;
                         self.pc = addr;
                         Ok(format!("Set pc to absolute ${:04X}", addr))
-                    }
+                    },
                     _ => Err(format!("JMP doesn't use {:?}", a))
                 }
             },
             Code::JSR => {
                 match a {
-                    Specified(DoubleByte(Absolute)) => {
+                    Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
                         let pc = self.pc;
                         let addr = self.read_two_bytes(pc)?;
+                        self.last_read_bytes.push_str(&format!("{:02X} {:02X}", addr & 0xFF, addr >> 8));
+                        self.last_instr.push_str(&format!("${:04X} ", addr));
                         self.counter += min_cycles;
                         let ret_addr = pc + 2;
                         self.stack_push_double(ret_addr)?;
@@ -611,6 +659,7 @@ impl CPU {
             
             Code::NOP => {
                 self.counter += min_cycles;
+                self.last_read_bytes.push_str("        ");
                 Ok(format!("NOP"))
             },
             Code::BRK => {
@@ -625,7 +674,7 @@ impl CPU {
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)
             },
-            Code::ILL => Err(format!("Illegal instruction {:02X}!", o))
+            Code::ILL => Err(format!("Illegal instruction!",))
         }     
     }
 
@@ -668,7 +717,8 @@ impl CPU {
         let addr = (self.stack_pointer as u16) + STACK_REGION;
         let new_sp = self.stack_pointer.wrapping_sub(1);
         self.stack_pointer = new_sp;
-        self.write(addr, val)
+        self.ram[addr as usize] = val;
+        Ok(format!("Pushed {:02X} to stack at {:04X}", val, addr))
     }
     
     #[inline(always)]
@@ -683,7 +733,7 @@ impl CPU {
         let new_sp = self.stack_pointer.wrapping_add(1);
         let addr = (new_sp as u16)  + STACK_REGION;
         self.stack_pointer = new_sp;
-        self.read(addr)
+        Ok(self.ram[addr as usize])
     }
 
     #[inline(always)]
@@ -727,7 +777,7 @@ impl CPU {
     fn add(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
         let carry = self.status_register.get_flag(StatusFlags::C).bits;
-        let next_carry = u8::MAX - rhs - carry > self.axy_registers[ACCUMULATOR] || (rhs == 255 && carry == 1);
+        let next_carry = (rhs == 255 && carry == 1) || u8::MAX - rhs - carry > self.axy_registers[ACCUMULATOR];
         let res = self.axy_registers[ACCUMULATOR].wrapping_add(rhs.wrapping_add(carry));
         let overflow = ((self.axy_registers[ACCUMULATOR] ^ res) & 0x80) != 0;
         self.set_cznv(res, next_carry, overflow);
@@ -741,7 +791,7 @@ impl CPU {
     fn sub(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
         let carry = self.status_register.get_flag(StatusFlags::C).bits;
-        let next_carry = self.axy_registers[ACCUMULATOR] < (rhs + carry) || (rhs == 255 && carry == 1);
+        let next_carry = (rhs == 255 && carry == 1) || self.axy_registers[ACCUMULATOR] < (rhs + carry);
         let res = self.axy_registers[ACCUMULATOR].wrapping_sub(rhs.wrapping_add(carry));
         let overflow = ((self.axy_registers[ACCUMULATOR] ^ (255 - res)) & 0x80) != 0;
         self.set_cznv(res, !next_carry, overflow);
@@ -777,19 +827,36 @@ impl CPU {
 
     #[inline(always)]
     fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, cond: bool) -> CPUResult<String> {
-        let (bytes, extra_cycles, val) = self.address_read(a, None)?;
-        if cond {
-            self.modify_pc_counter(bytes, min_cycles + 1 + 2 * extra_cycles);
-            if val > 127 {
-                let addr = -((val as i8) as i16) as u16;
-                self.pc -= addr;
-                Ok(format!("{}: Branched by -{}", msg, addr))
+        let (bytes, _, val) = self.address_read(a, None)?;
+        self.pc += bytes;
+        let (msg, extra, next_addr) = if val > 127 {
+            let disp: u16 = match (val as i8).checked_abs() {
+                Some(d) => d as u16,
+                None => 128
+            };
+            let extra = if self.pc & 0xFF <= disp {
+                2
             } else {
-                self.pc += val as u16;
-                Ok(format!("{}: Branched by {}", msg, val))
-            }
+                0
+            };
+            (format!("{}: Branched by -{}", msg, disp), extra, self.pc - disp)
         } else {
-            self.modify_pc_counter(bytes, min_cycles);
+            let extra = if (self.pc & 0xFF + (val as u16)) >= 0x100 {
+                2
+            } else {
+                0
+            };
+            (format!("{}: Branched by {}", msg, val), extra, self.pc + (val as u16))
+        };
+
+        self.last_instr.push_str(&format!("${:04X} ", next_addr));
+        
+        if cond {
+            self.pc = next_addr;
+            self.counter += min_cycles + 1 + extra;
+            Ok(msg)
+        } else {
+            self.counter += min_cycles;
             Ok(format!("{}: No branch.", msg))
         }
     }
