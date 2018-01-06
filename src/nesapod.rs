@@ -9,8 +9,8 @@ use core::ines::INES;
 use core::cpu::CPU;
 
 pub fn main(logging: bool, rom: Option<String>) {
-    const WIDTH: u32 = 1200;
-    const HEIGHT: u32 = 900;
+    const WIDTH: u32 = 900;
+    const HEIGHT: u32 = 700;
 
     let mut debugger = core::Debug::new(32, logging);
     let romname = match rom {

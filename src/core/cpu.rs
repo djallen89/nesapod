@@ -602,8 +602,8 @@ impl CPU {
             },
             Code::PLP => {
                 self.counter += min_cycles;
-                let flags = self.stack_pop()?;
-                self.status_register.bits = flags;
+                let flags = self.stack_pop()? & 0b1110_1111;
+                self.status_register.bits = flags | 0b0010_0000;
                 Ok(format!("Pulled processor flags from stack"))
             },
             
@@ -651,8 +651,8 @@ impl CPU {
                 Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
             Code::RTI => {
-                let flags = self.stack_pop()?;
-                self.status_register.bits = flags;
+                let flags = self.stack_pop()? & 0b1110_1111;
+                self.status_register.bits = flags | 0b0010_0000;
                 let addr = self.stack_pop_double()?;
                 self.pc = addr;
                 self.counter += min_cycles;
