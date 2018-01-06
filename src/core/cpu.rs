@@ -877,7 +877,7 @@ impl CPU {
         let lhs = self.axy_registers[lhs_idx];
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
         let res = lhs.wrapping_sub(val);
-        let carry = lhs < val;
+        let carry = lhs >= val;
         self.set_czn(res, carry);
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Compared {} to {} for result {:?}", lhs, val, self.status_register))
