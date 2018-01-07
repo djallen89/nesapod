@@ -86,9 +86,9 @@ pub enum Code {
     LDA, LDX, LDY, LAX,
     STA, STX, STY, SAX,
     ADC, SBC, 
-    INC, INX, INY, 
+    INC, INX, INY, INS,
     DEC, DEX, DEY, DCM,
-    ASL, LSR,
+    ASL, LSR, ALR,
     ROL, ROR, 
     AND, ORA, EOR, 
     CMP, CPX, CPY, 
@@ -480,6 +480,20 @@ impl CPU {
             Code::INC => self.inc(a, min_cycles, None),
             Code::INX => self.inc(a, min_cycles, Some(X)),
             Code::INY => self.inc(a, min_cycles, Some(Y)),
+            Code::INS => self.address_read_modify_write(a, min_cycles, "INS: INC -> SBC", None, &|cpu, val| {
+                let result = val.wrapping_add(1);
+                cpu.set_zn(result);
+                let lhs = cpu.axy_registers[ACCUMULATOR];
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    cpu.last_instr.push_str(&format!("= {:02X}", val));
+                }
+
+                let (final_result, next_carry, overflow) = cpu.adc(!result);
+                cpu.set_cznv(final_result, next_carry, overflow);
+                cpu.axy_registers[ACCUMULATOR] = final_result;
+                result //Set M to the result of the INC
+            }),
+            
             Code::DEC => self.dec(a, min_cycles, None),
             Code::DEX => self.dec(a, min_cycles, Some(X)),
             Code::DEY => self.dec(a, min_cycles, Some(Y)),
@@ -571,9 +585,6 @@ impl CPU {
                 result //Set M to the result of the ROL
             }),
             Code::LSE => self.address_read_modify_write(a, min_cycles, "LSE: LSR -> EOR", Some(ACCUMULATOR), &|cpu, val| {
-                if a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
-                }
                 let carry = (val & 0b0000_0001) == 0b0000_0001;
                 let result = val >> 1;
                 cpu.set_czn(result, carry);
@@ -604,6 +615,17 @@ impl CPU {
                 cpu.set_cznv(final_result, next_carry, overflow);
                 cpu.axy_registers[ACCUMULATOR] = final_result;
                 result //Set M to the result of the ROR
+            }),
+            
+            Code::ALR => self.address_read_modify_write(a, min_cycles, "ALR: AND -> LSR", Some(ACCUMULATOR), &|cpu, val| {
+                let acc = cpu.axy_registers[ACCUMULATOR];
+                let result = val & acc;
+                cpu.axy_registers[ACCUMULATOR] = result;
+
+                let carry = (result & 0b0000_0001) == 0b0000_0001;
+                let final_result = result >> 1;
+                cpu.set_czn(result, carry);
+                final_result
             }),
 
             Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }, "Logical AND"),
@@ -817,7 +839,7 @@ impl CPU {
             
             Code::BRK => {
                 self.counter += min_cycles;
-                let addr = self.pc + 1;
+                let addr = self.pc;
                 self.stack_push_double(addr)?;
                 
                 let irq = self.read_two_bytes(IRQ_VECTOR)?;

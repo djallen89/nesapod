@@ -125,6 +125,7 @@ pub fn main(logging: bool, rom: Option<String>) {
             }
         }
 
+        println!("{}", emulator.dump_ram());
         let msg = debugger.output();
         set_ui(ui.set_widgets(), &ids, &fonts, &msg);
         // Render the `Ui` and then display it on the screen.
@@ -214,7 +215,6 @@ mod support {
     /// Instantiate a GUI demonstrating every widget available in conrod.
     pub fn _gui(ui: &mut conrod::UiCell, ids: &Ids) {
         use conrod::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
-        use std::iter::once;
 
         const MARGIN: conrod::Scalar = 30.0;
         const SHAPE_GAP: conrod::Scalar = 50.0;
