@@ -83,11 +83,11 @@ pub fn counter_inc(x: u16, y: u8) -> u16 {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Code {
-    LDA, LDX, LDY, 
-    STA, STX, STY, 
+    LDA, LDX, LDY, LAX,
+    STA, STX, STY, SAX,
     ADC, SBC, 
     INC, INX, INY, 
-    DEC, DEX, DEY, 
+    DEC, DEX, DEY, DCM,
     ASL, LSR,
     ROL, ROR, 
     AND, ORA, EOR, 
@@ -100,6 +100,7 @@ pub enum Code {
     SEC, SED, SEI,
     CLC, CLD, CLI, CLV, 
     NOP, BRK,
+    SLO, RLA, LSE, RRA,
     ILL
 }
 
@@ -443,7 +444,18 @@ impl CPU {
             Code::LDA => self.load(a, min_cycles, ACCUMULATOR),
             Code::LDX => self.load(a, min_cycles, X),
             Code::LDY => self.load(a, min_cycles, Y),
-            
+            Code::LAX => {
+                let (bytes, extra_cycles, val) = self.address_read(a, None)?;
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    self.last_instr.push_str(&format!("= {:02X}", val));
+                } 
+                self.set_zn(val);
+                self.modify_pc_counter(bytes, min_cycles + extra_cycles);
+                self.axy_registers[ACCUMULATOR] = val;
+                self.axy_registers[X] = val;
+                Ok(format!("Loaded ({:08b}) into ACC and X", val))
+            },
+
             Code::STA => {
                 let val = self.axy_registers[ACCUMULATOR];
                 self.address_write(a, min_cycles, val, None)
@@ -456,6 +468,11 @@ impl CPU {
                 let val = self.axy_registers[Y];
                 self.address_write(a, min_cycles, val, None)
             },
+            Code::SAX => {
+                let val = self.axy_registers[ACCUMULATOR] & self.axy_registers[X];
+                self.address_write(a, min_cycles, val, None)
+            },
+
             
             Code::ADC => self.add(a, min_cycles),
             Code::SBC => self.sub(a, min_cycles),
@@ -466,6 +483,18 @@ impl CPU {
             Code::DEC => self.dec(a, min_cycles, None),
             Code::DEX => self.dec(a, min_cycles, Some(X)),
             Code::DEY => self.dec(a, min_cycles, Some(Y)),
+            Code::DCM => self.address_read_modify_write(a, min_cycles, "DCM: DEC -> CMP", None, &|cpu, val| {
+                let result = val.wrapping_sub(1);
+                cpu.set_zn(result);
+                let lhs = cpu.axy_registers[ACCUMULATOR];
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    cpu.last_instr.push_str(&format!("= {:02X}", val));
+                } 
+                let final_result = lhs.wrapping_sub(result);
+                let carry = lhs >= result;
+                cpu.set_czn(final_result, carry);
+                result
+            }),
             
             Code::ASL => self.address_read_modify_write(a, min_cycles, "Shifted left", Some(ACCUMULATOR), &|cpu, x| {
                 if a == Address::Acc {
@@ -504,6 +533,77 @@ impl CPU {
                 let result = (x >> 1) | (old_carry << 7);
                 cpu.set_czn(result, next_carry);
                 result
+            }),
+
+            Code::SLO => self.address_read_modify_write(a, min_cycles, "SLO: ASL -> ORA", Some(ACCUMULATOR), &|cpu, val| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
+                let carry = (val & 0b1000_0000) == 0b1000_0000;
+                let result = val << 1;
+                cpu.set_czn(result, carry);
+                
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    cpu.last_instr.push_str(&format!("= {:02X}", val));
+                } 
+                let acc = cpu.axy_registers[ACCUMULATOR];
+                let final_result = acc | result;
+                cpu.axy_registers[ACCUMULATOR] = final_result;
+                cpu.set_zn(final_result);
+                result //Set M to the result of the ASL
+            }),
+            Code::RLA => self.address_read_modify_write(a, min_cycles, "RLA: ROL -> AND", Some(ACCUMULATOR), &|cpu, val| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
+                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
+                let next_carry = (val & 0b1000_0000) == 0b1000_0000;
+                let result = (val << 1) | old_carry;
+                cpu.set_czn(result, next_carry);
+                
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    cpu.last_instr.push_str(&format!("= {:02X}", val));
+                } 
+                let acc = cpu.axy_registers[ACCUMULATOR];
+                let final_result = acc & result;
+                cpu.axy_registers[ACCUMULATOR] = final_result;
+                cpu.set_zn(final_result);
+                result //Set M to the result of the ROL
+            }),
+            Code::LSE => self.address_read_modify_write(a, min_cycles, "LSE: LSR -> EOR", Some(ACCUMULATOR), &|cpu, val| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
+                let carry = (val & 0b0000_0001) == 0b0000_0001;
+                let result = val >> 1;
+                cpu.set_czn(result, carry);
+                
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    cpu.last_instr.push_str(&format!("= {:02X}", val));
+                } 
+                let acc = cpu.axy_registers[ACCUMULATOR];
+                let final_result = acc ^ result;
+                cpu.axy_registers[ACCUMULATOR] = final_result;
+                cpu.set_zn(final_result);
+                result //Set M to the result of the LSR
+            }),
+            Code::RRA => self.address_read_modify_write(a, min_cycles, "RRA: ROR -> ADC", Some(ACCUMULATOR), &|cpu, val| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
+                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
+                let next_carry = val & 0b0000_0001 == 0b0000_0001;
+                let result = (val >> 1) | (old_carry << 7);
+                cpu.set_czn(result, next_carry);
+
+                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                    cpu.last_instr.push_str(&format!("= {:02X}", val));
+                }
+
+                let (final_result, next_carry, overflow) = cpu.adc(result);
+                cpu.set_cznv(final_result, next_carry, overflow);
+                cpu.axy_registers[ACCUMULATOR] = final_result;
+                result //Set M to the result of the ROR
             }),
 
             Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }, "Logical AND"),
@@ -714,6 +814,7 @@ impl CPU {
                 self.counter += min_cycles;
                 Ok(format!("NOP"))
             },
+            
             Code::BRK => {
                 self.counter += min_cycles;
                 let addr = self.pc + 1;
@@ -725,6 +826,7 @@ impl CPU {
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits)
             },
+
             Code::ILL => Err(format!("Illegal instruction!",))
         }     
     }

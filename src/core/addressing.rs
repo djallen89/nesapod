@@ -1,4 +1,5 @@
 use core::cpu::Code;
+use core::cpu::Code::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Address {
@@ -35,7 +36,7 @@ pub enum DoubleType {
 
 const ACC: Address = Address::Acc;
 const IMP: Address = Address::Implied;
-const ILL: (Code, Address, u16) = (Code::ILL, Address::Invalid, 0);
+const ILG: (Code, Address, u16) = (ILL, Address::Invalid, 0);
 const IXI: Address = Address::Specified(AddressType::SingleByte(SingleType::IndirectX));
 const IYI: Address = Address::Specified(AddressType::SingleByte(SingleType::IndirectY));
 const REL: Address = Address::Specified(AddressType::SingleByte(SingleType::Relative));
@@ -49,22 +50,20 @@ const ABX: Address = Address::Specified(AddressType::DoubleByte(DoubleType::Abso
 const ABY: Address = Address::Specified(AddressType::DoubleByte(DoubleType::AbsoluteY));
 
 pub const OPCODE_TABLE: [(Code, Address, u16); 256] =
-//                    0                    1                     2    3                    4                   5                    6     7                   8                    9                    A     B                    C                   D                    E     F
-    [(Code::BRK, IMP, 7), (Code::ORA, IXI, 6),                 ILL, ILL,                 ILL, (Code::ORA, ZPG, 3), (Code::ASL, ZPG, 5), ILL, (Code::PHP, IMP, 3), (Code::ORA, IMD, 2), (Code::ASL, ACC, 2), ILL,                 ILL, (Code::ORA, ABS, 4), (Code::ASL, ABS, 6), ILL, //0
-     (Code::BPL, REL, 2), (Code::ORA, IYI, 5),                 ILL, ILL,                 ILL, (Code::ORA, ZPX, 4), (Code::ASL, ZPX, 6), ILL, (Code::CLC, IMP, 2), (Code::ORA, ABY, 4),                 ILL, ILL,                 ILL, (Code::ORA, ABX, 4), (Code::ASL, ABX, 7), ILL, //1
-     (Code::JSR, ABS, 6), (Code::AND, IXI, 6),                 ILL, ILL, (Code::BIT, ZPG, 3), (Code::AND, ZPG, 3), (Code::ROL, ZPG, 5), ILL, (Code::PLP, IMP, 4), (Code::AND, IMD, 2), (Code::ROL, ACC, 2), ILL, (Code::BIT, ABS, 4), (Code::AND, ABS, 4), (Code::ROL, ABS, 6), ILL, //2
-     (Code::BMI, REL, 2), (Code::AND, IYI, 5),                 ILL, ILL,                 ILL, (Code::AND, ZPX, 4), (Code::ROL, ZPX, 6), ILL, (Code::SEC, IMP, 2), (Code::AND, ABY, 4),                 ILL, ILL,                 ILL, (Code::AND, ABX, 4), (Code::ROL, ABX, 7), ILL, //3
-     (Code::RTI, IMP, 6), (Code::EOR, IXI, 6),                 ILL, ILL,                 ILL, (Code::EOR, ZPG, 3), (Code::LSR, ZPG, 5), ILL, (Code::PHA, IMP, 3), (Code::EOR, IMD, 2), (Code::LSR, ACC, 2), ILL, (Code::JMP, ABS, 3), (Code::EOR, ABS, 4), (Code::LSR, ABS, 6), ILL, //4
-     (Code::BVC, REL, 2), (Code::EOR, IYI, 5),                 ILL, ILL,                 ILL, (Code::EOR, ZPX, 4), (Code::LSR, ZPX, 6), ILL, (Code::CLI, IMP, 2), (Code::EOR, ABY, 4),                 ILL, ILL,                 ILL, (Code::EOR, ABX, 4), (Code::LSR, ABX, 7), ILL, //5
-     (Code::RTS, IMP, 6), (Code::ADC, IXI, 6),                 ILL, ILL,                 ILL, (Code::ADC, ZPG, 3), (Code::ROR, ZPG, 5), ILL, (Code::PLA, IMP, 4), (Code::ADC, IMD, 2), (Code::ROR, ACC, 2), ILL, (Code::JMP, IND, 5), (Code::ADC, ABS, 4), (Code::ROR, ABS, 6), ILL, //6
-     (Code::BVS, REL, 2), (Code::ADC, IYI, 5),                 ILL, ILL,                 ILL, (Code::ADC, ZPX, 4), (Code::ROR, ZPX, 6), ILL, (Code::SEI, IMP, 2), (Code::ADC, ABY, 5),                 ILL, ILL,                 ILL, (Code::ADC, ABX, 4), (Code::ROR, ABX, 7), ILL, //7
-     {              ILL}, (Code::STA, IXI, 6),                 ILL, ILL, (Code::STY, ZPG, 3), (Code::STA, ZPG, 3), (Code::STX, ZPG, 3), ILL, (Code::DEY, IMP, 2),                 ILL, (Code::TXA, IMP, 2), ILL, (Code::STY, ABS, 4), (Code::STA, ABS, 4), (Code::STX, ABS, 4), ILL, //8
-     (Code::BCC, REL, 2), (Code::STA, IYI, 6),                 ILL, ILL, (Code::STY, ZPX, 4), (Code::STA, ZPX, 4), (Code::STX, ZPY, 4), ILL, (Code::TYA, IMP, 2), (Code::STA, ABY, 5), (Code::TXS, IMP, 2), ILL,                 ILL, (Code::STA, ABX, 5),                 ILL, ILL, //9
-     (Code::LDY, IMD, 2), (Code::LDA, IXI, 6), (Code::LDX, IMD, 2), ILL, (Code::LDY, ZPG, 3), (Code::LDA, ZPG, 3), (Code::LDX, ZPG, 3), ILL, (Code::TAY, IMP, 2), (Code::LDA, IMD, 2), (Code::TAX, IMP, 2), ILL, (Code::LDY, ABS, 4), (Code::LDA, ABS, 4), (Code::LDX, ABS, 4), ILL, //A
-     (Code::BCS, REL, 2), (Code::LDA, IYI, 5),                 ILL, ILL, (Code::LDY, ZPX, 4), (Code::LDA, ZPX, 4), (Code::LDX, ZPY, 4), ILL, (Code::CLV, IMP, 2), (Code::LDA, ABY, 4), (Code::TSX, IMP, 2), ILL, (Code::LDY, ABX, 4), (Code::LDA, ABX, 4), (Code::LDX, ABY, 4), ILL, //B
-     (Code::CPY, IMD, 2), (Code::CMP, IXI, 6),                 ILL, ILL, (Code::CPY, ZPG, 3), (Code::CMP, ZPG, 3), (Code::DEC, ZPG, 5), ILL, (Code::INY, IMP, 2), (Code::CMP, IMD, 2), (Code::DEX, IMP, 2), ILL, (Code::CPY, ABS, 4), (Code::CMP, ABS, 4), (Code::DEC, ABS, 6), ILL, //C
-     (Code::BNE, REL, 2), (Code::CMP, IYI, 5),                 ILL, ILL,                 ILL, (Code::CMP, ZPX, 4), (Code::DEC, ZPX, 6), ILL, (Code::CLD, IMP, 2), (Code::CMP, ABY, 4),                 ILL, ILL,                 ILL, (Code::CMP, ABX, 4), (Code::DEC, ABX, 7), ILL, //D
-     (Code::CPX, IMD, 2), (Code::SBC, IXI, 6),                 ILL, ILL, (Code::CPX, ZPG, 3), (Code::SBC, ZPG, 3), (Code::INC, ZPG, 5), ILL, (Code::INX, IMP, 2), (Code::SBC, IMD, 2), (Code::NOP, IMP, 2), ILL, (Code::CPX, ABS, 4), (Code::SBC, ABS, 4), (Code::INC, ABS, 6), ILL, //E
-     (Code::BEQ, REL, 2), (Code::SBC, IYI, 5),                 ILL, ILL,                 ILL, (Code::SBC, ZPX, 4), (Code::INC, ZPX, 6), ILL, (Code::SED, IMP, 2), (Code::SBC, ABY, 4),                 ILL, ILL,                 ILL, (Code::SBC, ABX, 4), (Code::INC, ABX, 7), ILL];//F
-
-
+//              0              1                    2             3              4             5              6               7             8              9              A               B              C              D              E              F
+    [(BRK, IMP, 7), (ORA, IXI, 6),                ILG, (SLO, IXI, 8),           ILG, (ORA, ZPG, 3), (ASL, ZPG, 5), (SLO, ZPG, 5), (PHP, IMP, 3), (ORA, IMD, 2), (ASL, ACC, 2),           ILG,           ILG, (ORA, ABS, 4), (ASL, ABS, 6), (SLO, ABS, 6), //0
+     (BPL, REL, 2), (ORA, IYI, 5),                ILG, (SLO, IYI, 8),           ILG, (ORA, ZPX, 4), (ASL, ZPX, 6), (SLO, ZPX, 6), (CLC, IMP, 2), (ORA, ABY, 4),           ILG, (SLO, ABY, 7),           ILG, (ORA, ABX, 4), (ASL, ABX, 7), (SLO, ABX, 7), //1
+     (JSR, ABS, 6), (AND, IXI, 6),                ILG, (RLA, IXI, 8), (BIT, ZPG, 3), (AND, ZPG, 3), (ROL, ZPG, 5), (RLA, ZPG, 5), (PLP, IMP, 4), (AND, IMD, 2), (ROL, ACC, 2),           ILG, (BIT, ABS, 4), (AND, ABS, 4), (ROL, ABS, 6), (RLA, ABS, 6), //2
+     (BMI, REL, 2), (AND, IYI, 5),                ILG, (RLA, IYI, 8),           ILG, (AND, ZPX, 4), (ROL, ZPX, 6), (RLA, ZPX, 6), (SEC, IMP, 2), (AND, ABY, 4),           ILG, (RLA, ABY, 7),           ILG, (AND, ABX, 4), (ROL, ABX, 7), (RLA, ABX, 7), //3
+     (RTI, IMP, 6), (EOR, IXI, 6),                ILG, (LSE, IXI, 8),           ILG, (EOR, ZPG, 3), (LSR, ZPG, 5), (LSE, ZPG, 5), (PHA, IMP, 3), (EOR, IMD, 2), (LSR, ACC, 2),           ILG, (JMP, ABS, 3), (EOR, ABS, 4), (LSR, ABS, 6), (LSE, ABS, 6), //4
+     (BVC, REL, 2), (EOR, IYI, 5),                ILG, (LSE, IYI, 8),           ILG, (EOR, ZPX, 4), (LSR, ZPX, 6), (LSE, ZPX, 6), (CLI, IMP, 2), (EOR, ABY, 4),           ILG, (LSE, ABY, 7),           ILG, (EOR, ABX, 4), (LSR, ABX, 7), (LSE, ABX, 7), //5
+     (RTS, IMP, 6), (ADC, IXI, 6),                ILG, (RRA, IXI, 8),           ILG, (ADC, ZPG, 3), (ROR, ZPG, 5), (RRA, ZPG, 5), (PLA, IMP, 4), (ADC, IMD, 2), (ROR, ACC, 2),           ILG, (JMP, IND, 5), (ADC, ABS, 4), (ROR, ABS, 6), (RRA, ABS, 6), //6
+     (BVS, REL, 2), (ADC, IYI, 5),                ILG, (RRA, IYI, 8),           ILG, (ADC, ZPX, 4), (ROR, ZPX, 6), (RRA, ZPX, 6), (SEI, IMP, 2), (ADC, ABY, 5),           ILG, (RRA, ABY, 7),           ILG, (ADC, ABX, 4), (ROR, ABX, 7), (RRA, ABX, 7), //7
+     {        ILG}, (STA, IXI, 6),                ILG, (SAX, IXI, 6), (STY, ZPG, 3), (STA, ZPG, 3), (STX, ZPG, 3), (SAX, ZPG, 3), (DEY, IMP, 2),           ILG, (TXA, IMP, 2),           ILG, (STY, ABS, 4), (STA, ABS, 4), (STX, ABS, 4), (SAX, ABS, 4), //8
+     (BCC, REL, 2), (STA, IYI, 6),                ILG,           ILG, (STY, ZPX, 4), (STA, ZPX, 4), (STX, ZPY, 4), (SAX, ZPY, 4), (TYA, IMP, 2), (STA, ABY, 5), (TXS, IMP, 2),           ILG,           ILG, (STA, ABX, 5),           ILG,           ILG, //9
+     (LDY, IMD, 2), (LDA, IXI, 6),      (LDX, IMD, 2), (LAX, IXI, 6), (LDY, ZPG, 3), (LDA, ZPG, 3), (LDX, ZPG, 3), (LAX, ZPG, 3), (TAY, IMP, 2), (LDA, IMD, 2), (TAX, IMP, 2),           ILG, (LDY, ABS, 4), (LDA, ABS, 4), (LDX, ABS, 4), (LAX, ABS, 4), //A
+     (BCS, REL, 2), (LDA, IYI, 5),                ILG, (LAX, IYI, 5), (LDY, ZPX, 4), (LDA, ZPX, 4), (LDX, ZPY, 4), (LAX, ZPY, 4), (CLV, IMP, 2), (LDA, ABY, 4), (TSX, IMP, 2),           ILG, (LDY, ABX, 4), (LDA, ABX, 4), (LDX, ABY, 4), (LAX, ABY, 4), //B
+     (CPY, IMD, 2), (CMP, IXI, 6),                ILG, (DCM, IXI, 8), (CPY, ZPG, 3), (CMP, ZPG, 3), (DEC, ZPG, 5), (DCM, ZPG, 5), (INY, IMP, 2), (CMP, IMD, 2), (DEX, IMP, 2),           ILG, (CPY, ABS, 4), (CMP, ABS, 4), (DEC, ABS, 6), (DCM, ABS, 6), //C
+     (BNE, REL, 2), (CMP, IYI, 5),                ILG, (DCM, IYI, 8),           ILG, (CMP, ZPX, 4), (DEC, ZPX, 6), (DCM, ZPX, 6), (CLD, IMP, 2), (CMP, ABY, 4),           ILG, (DCM, ABY, 7),           ILG, (CMP, ABX, 4), (DEC, ABX, 7), (DCM, ABX, 7), //D
+     (CPX, IMD, 2), (SBC, IXI, 6),                ILG,           ILG, (CPX, ZPG, 3), (SBC, ZPG, 3), (INC, ZPG, 5),           ILG, (INX, IMP, 2), (SBC, IMD, 2), (NOP, IMP, 2),           ILG, (CPX, ABS, 4), (SBC, ABS, 4), (INC, ABS, 6),           ILG, //E
+     (BEQ, REL, 2), (SBC, IYI, 5),                ILG,           ILG,           ILG, (SBC, ZPX, 4), (INC, ZPX, 6),           ILG, (SED, IMP, 2), (SBC, ABY, 4),           ILG,           ILG,           ILG, (SBC, ABX, 4), (INC, ABX, 7),           ILG];//F
