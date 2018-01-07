@@ -224,13 +224,16 @@ impl INES {
         self.prg_rom_size + self.chr_mem_size
     }
 
-    pub fn dump_ram(&self, idx: usize) -> String {
-        let status = self.prg_ram[0] as usize;
-        let msg: String = self.prg_ram[idx - 0x5FFF .. self.prg_ram.len()].iter()
+    pub fn dump_ram(&self) -> String {
+        let status0 = self.prg_ram[0] as u8;
+        let status1 = self.prg_ram[1] as u8;
+        let status2 = self.prg_ram[2] as u8;
+        let status3 = self.prg_ram[3] as u8;
+        let msg: String = self.prg_ram[4 .. self.prg_ram.len()].iter()
             .take_while(|&x| *x != 0 )
             .map(|&x| x as char)
             .collect();
-        format!("\n{}: {}\n", status, msg)
+        format!("\n{:02X} {:02X} {:02X} {:02X}: {}\n", status0, status1, status2, status3, msg)
     }
 
     pub fn read(&self, idx: u16) -> CPUResult<u8> {

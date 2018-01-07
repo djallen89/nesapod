@@ -2,7 +2,9 @@
 
 extern crate time;
 extern crate getopts;
+extern crate find_folder;
 extern crate pancurses;
+extern crate glium;
 #[macro_use] extern crate conrod;
 #[macro_use] extern crate bitflags;
 

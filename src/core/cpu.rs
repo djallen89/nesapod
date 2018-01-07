@@ -131,7 +131,7 @@ impl CPU {
     pub fn power_up(ines: INES) -> Result<CPU, String> {
         Ok(CPU {
             counter: 0,
-            pc: 0xC000,
+            pc: RESET_VECTOR,
             stack_pointer: POWERUP_S,
             axy_registers: vec![0, 0, 0],
             aio_registers: vec![0; 32],
@@ -142,25 +142,27 @@ impl CPU {
             last_read_bytes: format!(""),
             last_instr: format!(""),
             last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
-                                    0, 0, 0, (StatusFlags::I | StatusFlags::S).bits, POWERUP_S)
-
+                                    0, 0, 0, (StatusFlags::I | StatusFlags::S).bits, POWERUP_S),
         })
     }
 
     pub fn reset(&mut self) -> CPUResult<String> {
         self.stack_pointer -= 3;
-        self.pc = 0xC000;
+        self.pc = RESET_VECTOR;
         self.status_register = self.status_register | StatusFlags::I;
-        self.step()
-        //self.execute(Code::JMP, Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)), 5)
+        //self.step()
+        self.execute(Code::JMP, Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)), 5)
     }
 
     pub fn shut_down(self) -> INES {
         self.cartridge
     }
 
-    pub fn dump_ram(&self, idx: usize) -> String {
-        self.cartridge.dump_ram(idx)
+    pub fn dump_ram(&self) -> String {
+        //let lsb = self.ram[1] as usize;
+        //let msb = self.ram[2] as usize;
+        //format!("{:02X} {:02X}", lsb, msb)
+        self.cartridge.dump_ram()
     }
 
     pub fn step(&mut self) -> CPUResult<String> {
@@ -254,23 +256,33 @@ impl CPU {
                 Ok((0, addr as u16))
             },
             SingleType::ZeroPgX => {
-                self.last_instr.push_str(&format!("${:02X},X ", addr));
-                Ok((0, self.axy_registers[X].wrapping_add(addr) as u16))
+                let real_addr = self.axy_registers[X].wrapping_add(addr) as u16;
+                self.last_instr.push_str(&format!("${:02X},X @ {:02X} ", addr, real_addr));
+                Ok((0, real_addr))
             },
             SingleType::ZeroPgY => {
-                self.last_instr.push_str(&format!("${:02X},Y ", addr));
-                Ok((0, self.axy_registers[Y].wrapping_add(addr) as u16))
+                let real_addr = self.axy_registers[Y].wrapping_add(addr) as u16;
+                self.last_instr.push_str(&format!("${:02X},Y @ {:02X} ", addr, real_addr));
+                Ok((0, real_addr))
             },
             SingleType::IndirectX => {
-                self.last_instr.push_str(&format!("$({:02X},X) ", addr));
-                let real_addr = self.axy_registers[X].wrapping_add(addr) as u16;
-                Ok((0, self.read_two_bytes(real_addr)?))
+                let lsb = self.axy_registers[X].wrapping_add(addr);
+                let real_addr_low = self.ram[(lsb as usize)];
+                let real_addr_high = self.ram[(lsb.wrapping_add(1) as usize)];
+                let real_addr = combine(real_addr_low, real_addr_high);
+                self.last_instr.push_str(&format!("(${:02X},X) @ {:02X} = {:04X} ", addr,
+                                                  addr.wrapping_add(self.axy_registers[X]),
+                                                  real_addr));
+                Ok((0, real_addr))
             },
             SingleType::IndirectY => {
-                self.last_instr.push_str(&format!("$({:02X},Y) ", addr));
-                let pre_addr = self.read_two_bytes(addr as u16)?;
+                let low = self.ram[addr as usize];
+                let high = self.ram[(addr as u8).wrapping_add(1) as usize];
+                let pre_addr = combine(low, high);
                 let extra = counter_inc(pre_addr, self.axy_registers[Y]);
                 let real_addr = (self.axy_registers[Y] as u16).wrapping_add(pre_addr);
+                self.last_instr.push_str(&format!("(${:02X}),Y = {:04X} @ {:04X} ",
+                                                  addr, pre_addr, real_addr));
                 Ok((extra, real_addr))
             },
             _ => panic!(format!("{:?} is not supported in decode_singlebyte", s))
@@ -287,15 +299,17 @@ impl CPU {
                 self.last_instr.push_str(&format!("${:04X} ", addr));
                 Ok((0, addr))
             },
-            DoubleType::AbsoluteY => {
-                self.last_instr.push_str(&format!("${:04X},Y ", addr));
-                let extra = counter_inc(addr, self.axy_registers[X]);
-                Ok((extra, (self.axy_registers[Y] as u16) + addr))
-            },
             DoubleType::AbsoluteX => {
-                self.last_instr.push_str(&format!("${:04X},X", addr));
+                let real_addr = (self.axy_registers[X] as u16) + addr;
                 let extra = counter_inc(addr, self.axy_registers[Y]);
-                Ok((extra, (self.axy_registers[X] as u16) + addr))
+                self.last_instr.push_str(&format!("${:04X},X @ {:04X} ", addr, real_addr));
+                Ok((extra, real_addr))
+            },
+            DoubleType::AbsoluteY => {
+                let extra = counter_inc(addr, self.axy_registers[X]);
+                let real_addr = (self.axy_registers[Y] as u16).wrapping_add(addr);
+                self.last_instr.push_str(&format!("${:04X},Y @ {:04X} ", addr, real_addr));
+                Ok((extra, real_addr))
             },
             DoubleType::Indirect => panic!("No indirect in decode double byte!")
         }
@@ -357,33 +371,33 @@ impl CPU {
             Specified(SingleByte(Immediate)) => panic!("Don't use read modify write for {:?}", a),
             Implied => if let Some(idx) = implied {
                 let val = self.axy_registers[idx];
-                let res = op(self, val);
-                self.axy_registers[idx] = res;
-                Ok(format!("{} ({:02X}) for res {:02X}", msg, val, res))
+                let result = op(self, val);
+                self.axy_registers[idx] = result;
+                Ok(format!("{} ({:02X}) for result {:02X}", msg, val, result))
             } else {
                 panic!("Improper use of rmw for None Implied")
             },
             Acc => {
                 let val = self.axy_registers[ACCUMULATOR];
-                let res = op(self, val);
-                self.axy_registers[ACCUMULATOR] = res;
-                Ok(format!("{} Acc ({:02X}) for res {:02X}", msg, val, res))
+                let result = op(self, val);
+                self.axy_registers[ACCUMULATOR] = result;
+                Ok(format!("{} Acc ({:02X}) for result {:02X}", msg, val, result))
             },
             Specified(SingleByte(s)) => {
                 let (_, addr) = self.decode_single_byte(s)?;
                 let val = self.read(addr)?;
-                let res = op(self, val);
-                self.write(addr, res)?;
+                let result = op(self, val);
+                self.write(addr, result)?;
                 self.pc += 1;
-                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, addr, val, res))
+                Ok(format!("{} ${:04X} ({:02X}) for result {:02X}", msg, addr, val, result))
             },
             Specified(DoubleByte(d)) => {
                 let (_, addr) = self.decode_double_byte(d)?;
                 let val = self.read(addr)?;
-                let res = op(self, val);
-                self.write(addr, val)?;
+                let result = op(self, val);
+                self.write(addr, result)?;
                 self.pc += 2;
-                Ok(format!("{} ${:04X} ({:02X}) for res {:02X}", msg, addr, val, res))
+                Ok(format!("{} ${:04X} ({:02X}) for result {:02X}", msg, addr, val, result))
             }
         }
     }
@@ -454,30 +468,42 @@ impl CPU {
             Code::DEY => self.dec(a, min_cycles, Some(Y)),
             
             Code::ASL => self.address_read_modify_write(a, min_cycles, "Shifted left", Some(ACCUMULATOR), &|cpu, x| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
                 let carry = (x & 0b1000_0000) == 0b1000_0000;
-                let res = x << 1;
-                cpu.set_czn(res, carry);
-                res
+                let result = x << 1;
+                cpu.set_czn(result, carry);
+                result
             }),
             Code::LSR => self.address_read_modify_write(a, min_cycles, "Shifted right", Some(ACCUMULATOR), &|cpu, x| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
                 let carry = (x & 0b0000_0001) == 0b0000_0001;
-                let res = x >> 1;
-                cpu.set_czn(res, carry);
-                res
+                let result = x >> 1;
+                cpu.set_czn(result, carry);
+                result
             }),
             Code::ROL => self.address_read_modify_write(a, min_cycles, "Rotated left", Some(ACCUMULATOR), &|cpu, x| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
                 let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
                 let next_carry = (x & 0b1000_0000) == 0b1000_0000;
-                let res = (x << 1) | old_carry;
-                cpu.set_czn(res, next_carry);
-                res
+                let result = (x << 1) | old_carry;
+                cpu.set_czn(result, next_carry);
+                result
             }),
             Code::ROR => self.address_read_modify_write(a, min_cycles, "Rotated right", Some(ACCUMULATOR), &|cpu, x| {
+                if a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
                 let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
                 let next_carry = x & 0b0000_0001 == 0b0000_0001;
-                let res = (x >> 1) | (old_carry << 7);
-                cpu.set_czn(res, next_carry);
-                res
+                let result = (x >> 1) | (old_carry << 7);
+                cpu.set_czn(result, next_carry);
+                result
             }),
 
             Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }, "Logical AND"),
@@ -578,10 +604,10 @@ impl CPU {
 
             },
             Code::TSX => {
-                let val = self.stack_pointer;
-                self.axy_registers[X] = val;
+                self.axy_registers[X] = self.stack_pointer;
+                let val = self.axy_registers[X];
                 self.set_zn(val);
-                Ok(format!("Copied stack register to X"))
+                Ok(format!("Copied stack pointer to X"))
             },
             Code::TXS => {
                 let val = self.axy_registers[X];
@@ -622,8 +648,16 @@ impl CPU {
                 self.last_read_bytes.push_str(&format!("{:02X} {:02X}", addr & 0xFF, addr >> 8));
                 match a {
                     Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)) => {
-                        self.last_instr.push_str(&format!("(${:04X}) ", addr));
-                        let real_addr = self.read_two_bytes(addr)?;
+                        //let real_addr = self.read_two_bytes(addr)?;
+                        let low = self.read(addr)?;
+                        let next = if addr & 0xFF == 0xFF {
+                            addr & 0xFF00
+                        } else {
+                            addr.wrapping_add(1)
+                        };
+                        let high = self.read(next)?;
+                        let real_addr = combine(low, high);
+                        self.last_instr.push_str(&format!("(${:04X}) = {:04X}", addr, real_addr));
                         self.counter += min_cycles;
                         self.pc = real_addr;
                         Ok(format!("Set pc Indirect ${:04X} to ${:04X}", addr, real_addr))
@@ -645,17 +679,16 @@ impl CPU {
                         self.last_read_bytes.push_str(&format!("{:02X} {:02X}", addr & 0xFF, addr >> 8));
                         self.last_instr.push_str(&format!("${:04X} ", addr));
                         self.counter += min_cycles;
-                        let ret_addr = pc + 2;
-                        self.stack_push_double(ret_addr)?;
+                        self.stack_push_double(pc + 1)?;
                         self.pc = addr;
-                        Ok(format!("Pushed ${:04X} onto stack and set pc to {:04X}.", ret_addr, addr))
+                        Ok(format!("Pushed ${:04X} onto stack and set pc to {:04X}.", pc + 1, addr))
                     },
                     _ => Err(format!("JSR doesn't use {:?}", a))
                 }
             },
             Code::RTS => {
                 let addr = self.stack_pop_double()?;
-                self.pc = addr;
+                self.pc = addr + 1;
                 self.counter += min_cycles;
                 Ok(format!("Returned pc to {:04X}", self.pc)) 
             },
@@ -684,7 +717,7 @@ impl CPU {
             Code::BRK => {
                 self.counter += min_cycles;
                 //let addr = self.pc + 1; // Padding byte.
-                let addr = self.pc;
+                let addr = self.pc + 1;
                 self.stack_push_double(addr)?;
                 
                 let irq = self.read_two_bytes(IRQ_VECTOR)?;
@@ -697,7 +730,6 @@ impl CPU {
         }     
     }
 
-    #[inline(always)]
     fn set_zn(&mut self, val: u8) {
         if val == 0 {
             self.set_flag_op(StatusFlags::Z);
@@ -711,7 +743,6 @@ impl CPU {
         }
     }
 
-    #[inline(always)]
     fn set_czn(&mut self, val: u8, carry: bool) {
         self.set_zn(val);
         if carry {
@@ -721,7 +752,6 @@ impl CPU {
         }
     }
 
-    #[inline(always)]
     fn set_cznv(&mut self, val: u8, carry: bool, overflow: bool) {
         self.set_czn(val, carry);
         if overflow {
@@ -731,31 +761,28 @@ impl CPU {
         }
     }
 
-    #[inline(always)]
     fn stack_push(&mut self, val: u8) -> CPUResult<String> {
         let addr = (self.stack_pointer as u16) + STACK_REGION;
+        self.ram[addr as usize] = val;
         let new_sp = self.stack_pointer.wrapping_sub(1);
         self.stack_pointer = new_sp;
-        self.ram[addr as usize] = val;
         Ok(format!("Pushed {:02X} to stack at {:04X}", val, addr))
     }
     
-    #[inline(always)]
     fn stack_push_double(&mut self, val: u16) -> CPUResult<String> {
         let (lower, upper) = split(val);
         self.stack_push(upper)?;
         self.stack_push(lower)
     }
 
-    #[inline(always)]
     fn stack_pop(&mut self) -> CPUResult<u8> {
         let new_sp = self.stack_pointer.wrapping_add(1);
         let addr = (new_sp as u16)  + STACK_REGION;
         self.stack_pointer = new_sp;
-        Ok(self.ram[addr as usize])
+        let val = self.ram[addr as usize];
+        Ok(val)
     }
 
-    #[inline(always)]
     fn stack_pop_double(&mut self) -> CPUResult<u16> {
         let lower = self.stack_pop()?;
         let upper = self.stack_pop()?;
@@ -763,32 +790,32 @@ impl CPU {
         Ok(val)
     }
 
-    #[inline(always)]
     fn load(&mut self, a: Address, min_cycles: u16, r: usize) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
+        if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+            self.last_instr.push_str(&format!("= {:02X}", val));
+        } 
         self.set_zn(val);
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         self.axy_registers[r] = val;
         Ok(format!("Loaded ({:08b}) into axy register {}", val, r))
     }
 
-    #[inline(always)]
     fn inc(&mut self, a: Address, min_cycles: u16, implied: Option<usize>) -> CPUResult<String> {
         let msg = "Incremented ";
         self.address_read_modify_write(a, min_cycles, msg, implied, &|cpu, x| {
-            let res = x.wrapping_add(1);
-            cpu.set_zn(res);
-            res
+            let result = x.wrapping_add(1);
+            cpu.set_zn(result);
+            result
         })
     }
 
-    #[inline(always)]
     fn dec(&mut self, a: Address, min_cycles: u16, implied: Option<usize>) -> CPUResult<String> {
        let msg = "Decremented ";
        self.address_read_modify_write(a, min_cycles, msg, implied, &|cpu, x| {
-           let res = x.wrapping_sub(1);
-           cpu.set_zn(res);
-           res
+           let result = x.wrapping_sub(1);
+           cpu.set_zn(result);
+           result
         })
     }
 
@@ -796,59 +823,58 @@ impl CPU {
         let carry = self.status_register.get_flag(StatusFlags::C).bits;
         let lhs = self.axy_registers[ACCUMULATOR];
         let next_carry = (rhs == 255 && carry == 1) || u8::MAX - rhs - carry < lhs;
-        let res = lhs.wrapping_add(rhs.wrapping_add(carry));
+        let result = lhs.wrapping_add(rhs.wrapping_add(carry));
         let overflow = ((!(lhs ^ rhs) & 0b1000_0000) == 0b1000_0000) &&
-            ((lhs ^ res) & 0b1000_0000) == 0b1000_0000;
-        (res, next_carry, overflow)
+            ((lhs ^ result) & 0b1000_0000) == 0b1000_0000;
+        (result, next_carry, overflow)
     }
 
-    #[inline(always)]
     fn add(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
-        let (res, next_carry, overflow) = self.adc(rhs);
-        self.set_cznv(res, next_carry, overflow);
-        self.axy_registers[ACCUMULATOR] = res;
+        if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+            self.last_instr.push_str(&format!("= {:02X}", rhs));
+        } 
+        let (result, next_carry, overflow) = self.adc(rhs);
+        self.set_cznv(result, next_carry, overflow);
+        self.axy_registers[ACCUMULATOR] = result;
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Added {} to accumulator for {} with carry {}",
-                   rhs, res, next_carry))
+                   rhs, result, next_carry))
     }
 
-    #[inline(always)]
     fn sub(&mut self, a: Address, min_cycles: u16) -> CPUResult<String> {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None)?;
-        let (res, next_carry, overflow) = self.adc(!rhs);
-        self.set_cznv(res, next_carry, overflow);
-        self.axy_registers[ACCUMULATOR] = res;
+        if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+            self.last_instr.push_str(&format!("= {:02X}", rhs));
+        }
+        let (result, next_carry, overflow) = self.adc(!rhs);
+        self.set_cznv(result, next_carry, overflow);
+        self.axy_registers[ACCUMULATOR] = result;
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Subtracted {} from accumulator for result {} with carry: {} and overflow: {} ",
-                   rhs, res, !next_carry, overflow))
+                   rhs, result, !next_carry, overflow))
     }
 
-    #[inline(always)]
     fn set_flag_op(&mut self, flag: StatusFlags) {
         self.status_register |= flag;
     }
 
-    #[inline(always)]
     fn clear_flag_op(&mut self, flag: StatusFlags) {
         self.status_register &= !flag;
     }
 
-    #[inline(always)]
     fn set_flag(&mut self, min_cycles: u16, flag: StatusFlags) -> CPUResult<String> {
         self.counter += min_cycles;
         self.set_flag_op(flag);
         Ok(format!("Set {:?}", flag))
     }
 
-    #[inline(always)]
     fn clear_flag(&mut self, min_cycles: u16, flag: StatusFlags) -> CPUResult<String> {
         self.counter += min_cycles;
         self.clear_flag_op(flag);
         Ok(format!("Cleared {:?}", flag))
     }
 
-    #[inline(always)]
     fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, cond: bool) -> CPUResult<String> {
         let (bytes, _, val) = self.address_read(a, None)?;
         self.pc += bytes;
@@ -884,29 +910,32 @@ impl CPU {
         }
     }
 
-    #[inline(always)]
     fn cmp(&mut self, a: Address, min_cycles: u16, lhs_idx: usize) -> CPUResult<String> {
         let lhs = self.axy_registers[lhs_idx];
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
-        let res = lhs.wrapping_sub(val);
+        if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+            self.last_instr.push_str(&format!("= {:02X}", val));
+        } 
+        let result = lhs.wrapping_sub(val);
         let carry = lhs >= val;
-        self.set_czn(res, carry);
+        self.set_czn(result, carry);
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         Ok(format!("Compared {} to {} for result {:?}", lhs, val, self.status_register))
     }
 
-    #[inline(always)]
     fn bitwise(&mut self, a: Address, min_cycles: u16, op: &Fn(u8, u8) -> u8, msg: &str) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
+        if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+            self.last_instr.push_str(&format!("= {:02X}", val));
+        } 
         let acc = self.axy_registers[ACCUMULATOR];
-        let res = op(acc, val);
-        self.axy_registers[ACCUMULATOR] = res;
-        self.set_zn(res);
+        let result = op(acc, val);
+        self.axy_registers[ACCUMULATOR] = result;
+        self.set_zn(result);
         self.modify_pc_counter(bytes, min_cycles);
         Ok(format!("{} by {:02X}", msg, val))
     }
 
-    #[inline(always)]
     fn modify_pc_counter(&mut self, bytes: u16, cycles: u16) {
         self.pc += bytes;
         self.counter += cycles;
