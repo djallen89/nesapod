@@ -716,7 +716,6 @@ impl CPU {
             },
             Code::BRK => {
                 self.counter += min_cycles;
-                //let addr = self.pc + 1; // Padding byte.
                 let addr = self.pc + 1;
                 self.stack_push_double(addr)?;
                 
