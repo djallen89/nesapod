@@ -502,7 +502,6 @@ impl CPU {
             Code::INY => self.inc(a, min_cycles, Some(Y)),
             Code::INS => self.address_rmw(a, min_cycles, "INS: INC -> SBC", None, &|cpu, val| {
                 let result = val.wrapping_add(1);
-                cpu.set_zn(result);
                 let lhs = cpu.axy[A];
                 if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
                     cpu.last_instr.push_str(&format!("= {:02X}", val));
@@ -519,7 +518,6 @@ impl CPU {
             Code::DEY => self.dec(a, min_cycles, Some(Y)),
             Code::DCM => self.address_rmw(a, min_cycles, "DCM: DEC -> CMP", None, &|cpu, val| {
                 let result = val.wrapping_sub(1);
-                cpu.set_zn(result);
                 let lhs = cpu.axy[A];
                 if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
                     cpu.last_instr.push_str(&format!("= {:02X}", val));
@@ -534,8 +532,7 @@ impl CPU {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let carry = (x & 0b1000_0000) == 0b1000_0000;
-                let result = x << 1;
+                let (result, carry) = asl(x);
                 cpu.set_czn(result, carry);
                 result
             }),
@@ -543,8 +540,7 @@ impl CPU {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let carry = (x & 0b0000_0001) == 0b0000_0001;
-                let result = x >> 1;
+                let (result, carry) = lsr(x);
                 cpu.set_czn(result, carry);
                 result
             }),
@@ -552,9 +548,7 @@ impl CPU {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
-                let next_carry = (x & 0b1000_0000) == 0b1000_0000;
-                let result = (x << 1) | old_carry;
+                let (result, next_carry) = cpu.rol(x);
                 cpu.set_czn(result, next_carry);
                 result
             }),
@@ -562,9 +556,7 @@ impl CPU {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
-                let next_carry = x & 0b0000_0001 == 0b0000_0001;
-                let result = (x >> 1) | (old_carry << 7);
+                let (result, next_carry) = cpu.ror(x);
                 cpu.set_czn(result, next_carry);
                 result
             }),
@@ -573,55 +565,40 @@ impl CPU {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let carry = (val & 0b1000_0000) == 0b1000_0000;
-                let result = val << 1;
+                let (result, carry) = asl(val);
                 cpu.set_czn(result, carry);
                 
                 if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
                     cpu.last_instr.push_str(&format!("= {:02X}", val));
-                } 
-                let acc = cpu.axy[A];
-                let final_result = acc | result;
-                cpu.axy[A] = final_result;
-                cpu.set_zn(final_result);
-                result //Set M to the result of the ASL
+                }
+                cpu.bitwise_helper(result, &|x, y| { x | y });
+                cpu.axy[A]
             }),
             Code::RLA => self.address_rmw(a, min_cycles, "RLA: ROL -> AND", Some(A), &|cpu, val| {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
-                let next_carry = (val & 0b1000_0000) == 0b1000_0000;
-                let result = (val << 1) | old_carry;
+                let (result, next_carry) = cpu.ror(val);
                 cpu.set_czn(result, next_carry);
                 
                 if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
                     cpu.last_instr.push_str(&format!("= {:02X}", val));
-                } 
-                let acc = cpu.axy[A];
-                let final_result = acc & result;
-                cpu.axy[A] = final_result;
-                cpu.set_zn(final_result);
-                result //Set M to the result of the ROL
+                }
+                cpu.bitwise_helper(result, &|x, y| { x & y });
+                cpu.axy[A]
             }),
             Code::LSE => self.address_rmw(a, min_cycles, "LSE: LSR -> EOR", Some(A), &|cpu, val| {
-                let carry = (val & 0b0000_0001) == 0b0000_0001;
-                let result = val >> 1;
+                let (result, carry) = lsr(val);
                 cpu.set_czn(result, carry);
                 
                 if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
                     cpu.last_instr.push_str(&format!("= {:02X}", val));
-                } 
-                let acc = cpu.axy[A];
-                let final_result = acc ^ result;
-                cpu.axy[A] = final_result;
-                cpu.set_zn(final_result);
-                result //Set M to the result of the LSR
+                }
+                cpu.bitwise_helper(result, &|x, y| { x ^ y });
+                cpu.axy[A]
             }),
             Code::RRA => self.address_rmw(a, min_cycles, "RRA: ROR -> ADC", Some(A), &|cpu, val| {
-                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
-                let next_carry = val & 0b0000_0001 == 0b0000_0001;
-                let result = (val >> 1) | (old_carry << 7);
+                let (result, next_carry) = cpu.ror(val);
                 cpu.set_czn(result, next_carry);
 
                 if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
@@ -635,12 +612,9 @@ impl CPU {
             }),
             
             Code::ALR => self.address_rmw(a, min_cycles, "ALR: AND -> LSR", Some(A), &|cpu, val| {
-                let acc = cpu.axy[A];
-                let result = val & acc;
-                cpu.axy[A] = result;
-
-                let carry = (result & 0b0000_0001) == 0b0000_0001;
-                let final_result = result >> 1;
+                cpu.bitwise_helper(val, &|x, y| { x & y });
+                let result = cpu.axy[A];
+                let (final_result, carry) = lsr(result);
                 cpu.set_czn(result, carry);
                 final_result
             }),
@@ -648,11 +622,8 @@ impl CPU {
             Code::ARR => self.address_rmw(a, min_cycles, "ARR: AND -> ROR", Some(A), &|cpu, val| {
                 let acc = cpu.axy[A];
                 let result = acc & val;
-                cpu.set_zn(result);
 
-                let old_carry = cpu.status_register.get_flag_bit(StatusFlags::C);
-                let next_carry = result & 0b0000_0001 == 0b0000_0001;
-                let final_result = (result >> 1) | (old_carry << 7);
+                let (final_result, next_carry) = cpu.ror(result);
                 cpu.set_czn(result, next_carry);
                 final_result
             }),
@@ -1113,15 +1084,19 @@ impl CPU {
         Ok(format!("Compared {} to {} for result {:?}", lhs, val, self.status_register))
     }
 
+    fn bitwise_helper(&mut self, val: u8, op: &Fn(u8, u8) -> u8) {
+        let acc = self.axy[A];
+        let res = op(self.axy[A], val);
+        self.axy[A] = res;
+        self.set_zn(res);
+    }
+
     fn bitwise(&mut self, a: Address, min_cycles: u16, op: &Fn(u8, u8) -> u8, msg: &str) -> CPUResult<String> {
         let (bytes, extra_cycles, val) = self.address_read(a, None)?;
         if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
             self.last_instr.push_str(&format!("= {:02X}", val));
-        } 
-        let acc = self.axy[A];
-        let result = op(acc, val);
-        self.axy[A] = result;
-        self.set_zn(result);
+        }
+        self.bitwise_helper(val, op);
         self.modify_pc_counter(bytes, min_cycles);
         Ok(format!("{} by {:02X}", msg, val))
     }
@@ -1130,4 +1105,29 @@ impl CPU {
         self.pc += bytes;
         self.counter += cycles;
     }
+
+    fn rol(&self, lhs: u8) -> (u8, bool) {
+        let old_carry = self.status_register.get_flag_bit(StatusFlags::C);
+        let next_carry = (lhs & 0b1000_0000) == 0b1000_0000;
+        ((lhs << 1) | old_carry, next_carry)
+    }
+
+    fn ror(&self, lhs: u8) -> (u8, bool) {
+        let old_carry = self.status_register.get_flag_bit(StatusFlags::C);
+        let next_carry = lhs & 0b0000_0001 == 0b0000_0001;
+        ((lhs >> 1) | (old_carry << 7), next_carry)
+    }
 }
+
+#[inline(always)]
+fn lsr(lhs: u8) -> (u8, bool) {
+    let carry = lhs & 0b0000_00001 == 0b0000_0001;
+    (lhs >> 1, carry)
+}
+
+#[inline(always)]
+fn asl(lhs: u8) -> (u8, bool) {
+    let carry = (lhs & 0b1000_0000) == 0b1000_0000;
+    (lhs << 1, carry)
+}
+

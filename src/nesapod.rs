@@ -88,7 +88,6 @@ pub fn main(logging: bool, rom: Option<String>) {
                         ..
                     } => {
                         let msg = emulator.dump_ram();
-                        println!("{}", msg);
                         debugger.input(&msg);
                         break 'main
                     },
@@ -126,7 +125,6 @@ pub fn main(logging: bool, rom: Option<String>) {
             }
         }
 
-        println!("{}", emulator.dump_ram());
         let msg = debugger.output();
         set_ui(ui.set_widgets(), &ids, &fonts, &msg);
         // Render the `Ui` and then display it on the screen.
