@@ -105,6 +105,7 @@ pub fn main(logging: bool, rom: Option<String>) {
                             VKC::F => 1 << 4,
                             VKC::L => 1 << 8,
                             VKC::Z => 1 << 12,
+                            VKC::T => 1 << 16,
                             _ => 0
                         };
                         while steps > 0 {
@@ -214,7 +215,7 @@ mod support {
 
     /// Instantiate a GUI demonstrating every widget available in conrod.
     pub fn _gui(ui: &mut conrod::UiCell, ids: &Ids) {
-        use conrod::{widget, Colorable, Labelable, Positionable, Sizeable, Widget};
+        use conrod::{widget, Labelable, Positionable, Sizeable, Widget};
 
         const MARGIN: conrod::Scalar = 30.0;
         const SHAPE_GAP: conrod::Scalar = 50.0;
