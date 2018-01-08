@@ -4,6 +4,24 @@ pub const VISIBLE_SCANLINES: usize = 240;
 pub const PRE_VBLANK_LINE: usize = 1;
 pub const VBLANK_LINES: usize = 20;
 
+/* PPU MEMORY MAP
+ * 0000 ... 0FFF | 0x1000 | Pattern Table 0
+ * 1000 ... 1FFF | 0x1000 | Pattern Table 1
+ * 2000 ... 23FF | 0x0400 | Nametable 0
+ * 2400 ... 27FF | 0x0400 | Nametable 1
+ * 2800 ... 2BFF | 0x0400 | Nametable 2
+ * 2C00 ... 2FFF | 0x0400 | Nametable 3
+ * 3000 ... 3EFF | 0x0F00 | Mirrors of 0x2000 ... 0x2FFFF
+ * 3F00 ... 3F1F | 0x0020 | Pattern RAM indices
+ * 3F20 ... 3FFF | 0x00E0 | Mirrors of 0x3F00 ... 0x3F1F
+ */
+
+/* OAM :
+ * 00 ... 0C | 0x40 | Sprite Y coordinate
+ * 01 ... 0D | 0x40 | Sprite tile #
+ * 02 ... 0E
+ */
+
 bitflags! {
     pub struct PPUCTRL: u8 {
         const INIT = 0;
