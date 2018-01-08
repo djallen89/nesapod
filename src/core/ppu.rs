@@ -1,8 +1,8 @@
 use core::ines::INES;
 
-pub const VISIBLE_SCANLINES: usize = 240;
-pub const PRE_VBLANK_LINE: usize = 1;
-pub const VBLANK_LINES: usize = 20;
+pub const SCANLINES: usize = 262;
+pub const _VISIBLE_SCANLINES: usize = 240;
+pub const SCANLINE_CYCLES: usize = 341;
 
 /* PPU MEMORY MAP
  * 0000 ... 0FFF | 0x1000 | Pattern Table 0
@@ -19,7 +19,8 @@ pub const VBLANK_LINES: usize = 20;
 /* OAM :
  * 00 ... 0C | 0x40 | Sprite Y coordinate
  * 01 ... 0D | 0x40 | Sprite tile #
- * 02 ... 0E
+ * 02 ... 0E | 0x40 | Sprite attribute
+ * 03 ... 0F | 0x40 | Sprite X coordinate
  */
 
 bitflags! {
@@ -106,12 +107,16 @@ impl PPU {
             video_ram: [0xFF; 2048],
             oam_ram: [0x00; 256],
             cycles: 0,
-            even_frame: true
+            even_frame: false
         }
     }
 
-    fn _reset() {
-        
+    fn _reset(&mut self) {
+        self.ppu_ctrl = PPUCTRL::INIT;
+        self.ppu_mask = PPUMASK::INIT;
+        self.ppu_gen_latch = 0x00;
+        self.ppu_data = 0x00;
+        self.even_frame = false;
     }
 
     pub fn is_vblank(&self) -> bool {

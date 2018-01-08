@@ -695,38 +695,14 @@ impl CPU {
                 Ok(format!("BIT tested {:08b}", val))
             },
             
-            Code::BCC => {
-                let cond = self.status_register.get_flags_status(StatusFlags::C);
-                self.branch(a, min_cycles, "BCC", !cond)
-            },
-            Code::BCS => {
-                let cond = self.status_register.get_flags_status(StatusFlags::C);
-                self.branch(a, min_cycles, "BCS", cond)
-            },
-            Code::BEQ => {
-                let cond = self.status_register.get_flags_status(StatusFlags::Z);
-                self.branch(a, min_cycles, "BEQ", cond)
-            },
-            Code::BNE => {
-                let cond = self.status_register.get_flags_status(StatusFlags::Z);
-                self.branch(a, min_cycles, "BNE", !cond)
-            },
-            Code::BMI => {
-                let cond = self.status_register.get_flags_status(StatusFlags::N);
-                self.branch(a, min_cycles, "BMI", cond)
-            },
-            Code::BPL => {
-                let cond = self.status_register.get_flags_status(StatusFlags::N);
-                self.branch(a, min_cycles, "BPL", !cond)
-            },
-            Code::BVC => {
-                let cond = self.status_register.get_flags_status(StatusFlags::V);
-                self.branch(a, min_cycles, "BVC", !cond)
-            },
-            Code::BVS => {
-                let cond = self.status_register.get_flags_status(StatusFlags::V);
-                self.branch(a, min_cycles, "BVS", cond)
-            },
+            Code::BCC => self.branch(a, min_cycles, "BCC", StatusFlags::C, false),
+            Code::BCS => self.branch(a, min_cycles, "BCS", StatusFlags::C, true),
+            Code::BEQ => self.branch(a, min_cycles, "BEQ", StatusFlags::Z, true),
+            Code::BNE => self.branch(a, min_cycles, "BNE", StatusFlags::Z, false),
+            Code::BMI => self.branch(a, min_cycles, "BMI", StatusFlags::N, true),
+            Code::BPL => self.branch(a, min_cycles, "BPL", StatusFlags::N, false),
+            Code::BVC => self.branch(a, min_cycles, "BVC", StatusFlags::V, false),
+            Code::BVS => self.branch(a, min_cycles, "BVS", StatusFlags::V, true),
             
             Code::TAX => {
                 let val = self.axy[A];
@@ -1036,7 +1012,12 @@ impl CPU {
         Ok(format!("Cleared {:?}", flag))
     }
 
-    fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, cond: bool) -> CPUResult<String> {
+    fn branch(&mut self, a: Address, min_cycles: u16, msg: &str, flag: StatusFlags, on: bool) -> CPUResult<String> {
+        let cond = if on {
+            self.status_register.get_flags_status(flag)
+        } else {
+            !self.status_register.get_flags_status(flag)
+        };
         let (bytes, _, val) = self.address_read(a, None)?;
         self.pc += bytes;
         let (msg, extra, next_addr) = if val > 127 {
