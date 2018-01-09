@@ -1,8 +1,18 @@
 use core::ines::INES;
 
 pub const SCANLINES: usize = 262;
-pub const _VISIBLE_SCANLINES: usize = 240;
+pub const VISIBLE_SCANLINES: usize = 240;
+pub const SCANLINE_LENGTH: usize = 256;
 pub const SCANLINE_CYCLES: usize = 341;
+pub const IMAGE_SIZE: usize = SCANLINES * SCANLINE_LENGTH;
+//
+pub const NTSC_PALETTE: [(u8, u8, u8); 56] = [
+    (84,  84,  84),    (0,  30, 116),   (8,  16, 144),  (48,   0, 136),  (68,   0, 100),  (92,   0,  48),  (84,   4,   0),  (60,  24,   0),  (32,  42,   0),   (8,  58,   0),   (0,  64,   0),   (0,  60,   0),   (0,  50,  60),   (0,   0,   0),
+    (152, 150, 152),   (8,  76, 196),  (48,  50, 236),  (92,  30, 228), (136,  20, 176), (160,  20, 100), (152,  34,  32), (120,  60,   0),  (84,  90,   0),  (40, 114,   0),   (8, 124,   0),   (0, 118,  40),   (0, 102, 120),   (0,   0,   0),
+    (236, 238, 236),  (76, 154, 236), (120, 124, 236), (176,  98, 236), (228,  84, 236), (236,  88, 180), (236, 106, 100), (212, 136,  32), (160, 170,   0), (116, 196,   0),  (76, 208,  32),  (56, 204, 108),  (56, 180, 204),  (60,  60,  60),
+    (236, 238, 236), (168, 204, 236), (188, 188, 236), (212, 178, 236), (236, 174, 236), (236, 174, 212), (236, 180, 176), (228, 196, 144), (204, 210, 120), (180, 222, 120), (168, 226, 144), (152, 226, 180), (160, 214, 228), (160, 162, 160)
+];
+
 
 /* PPU MEMORY MAP
  * 0000 ... 0FFF | 0x1000 | Pattern Table 0
@@ -23,6 +33,34 @@ pub const SCANLINE_CYCLES: usize = 341;
  * 03 ... 0F | 0x40 | Sprite X coordinate
  */
 
+/* Palettes:
+ * 3F00          | Univeral Background Color
+ * 3F01 ... 3F03 | Background palette 0
+ * 3F05 ... 3F07 | Background palette 1
+ * 3F09 ... 3F0B | Background palette 2
+ * 3F0D ... 3F0F | Background palette 3
+ * 3F11 ... 3F13 | Sprite palette 0
+ * 3F15 ... 3F17 | Sprite palette 1
+ * 3F19 ... 3F1B | Sprite palette 2
+ * 3F1D ... 3F1F | Sprite palette 3
+ *
+ * $3F1{0,4,8,C} mirror 3F0{0,4,8,C}
+ *
+ * Palette index decomposition:
+ * 43210
+ * |||||
+ * |||++- Pixel value from tile data
+ * |++--- Palette number from attribute table or OAM
+ * +----- Background/Sprite select
+ *
+ * Palette value decomposition:
+ * 76543210
+ * ||||||||
+ * ||||++++- Hue (phase, determines NTSC/PAL chroma)
+ * ||++----- Value (voltage, determines NTSC/PAL luma)
+ * ++------- Unimplemented, reads back as 0
+ */
+
 bitflags! {
     pub struct PPUCTRL: u8 {
         const INIT = 0;
@@ -33,19 +71,6 @@ bitflags! {
         const SPRITE_SIZE =  0b0010_0000;
         const PPU_MS_SELECT =  0b0100_0000;
         const VBLANK_NMI =  0b1000_0000;
-    }
-}
-
-impl PPUCTRL {
-    pub fn base_nametable_addres(&self) -> u16 {
-        0x2000 + 0x0400 * ((*self & PPUCTRL::NAMETABLE_MSB).bits as u16)
-    }
-    pub fn vram_inc(&self) -> u8 {
-        if (*self &  PPUCTRL::VRAM_INCREMENT) == PPUCTRL::VRAM_INCREMENT {
-            1
-        } else {
-            32
-        }
     }
 }
 
@@ -87,7 +112,7 @@ pub struct PPU {
     oam_ram: [u8; 256],
     cycles: u32,
     even_frame: bool,
-    
+    image: [u8; IMAGE_SIZE]
 }
 
 impl PPU {
@@ -107,7 +132,8 @@ impl PPU {
             video_ram: [0xFF; 2048],
             oam_ram: [0x00; 256],
             cycles: 0,
-            even_frame: false
+            even_frame: false,
+            image: [0; IMAGE_SIZE]
         }
     }
 
@@ -173,27 +199,85 @@ impl PPU {
         self.oam_dma += 1;
     }
 
+    fn oam_read_4(&self, id: u8) -> (u8, u8, u8, u8) {
+        let idx = id as usize;
+        (self.oam_ram[idx], self.oam_ram[idx + 1], self.oam_ram[idx + 2], self.oam_ram[idx + 3])
+    }
+
     fn vram_increment(&mut self) {
-        let inc = (self.ppu_ctrl & PPUCTRL::VRAM_INCREMENT).bits as u16;
-        self.vram_addr += inc;
-        if self.vram_addr >= 2048 {
-            self.vram_addr -= 2048
+        let increment = if (self.ppu_ctrl & PPUCTRL::VRAM_INCREMENT) == PPUCTRL::VRAM_INCREMENT {
+            1
+        } else {
+            32
+        };
+        self.vram_addr += increment;
+        if self.vram_addr >= 2047 {
+            self.vram_addr -= 2047
         }
     }
 
-    fn read_internal(&self, idx: u16, cart: &mut INES) -> u8 {
-        1
+    fn base_nametable(&self) -> u16 {
+        0x2000 + 0x400 * ((self.ppu_ctrl & PPUCTRL::NAMETABLE_MSB).bits as u16)
     }
 
-    fn oam_read(&self, idx: u8) -> u8 {
-        1
+    fn pattern_table(&self, flag: PPUCTRL) -> u16 {
+        if (self.ppu_ctrl & flag) == flag {
+            0x1000
+        } else {
+            0x0000
+        }
     }
 
-    fn prerender(&mut self, cart: &mut INES) {
+    fn sprite_pattern_table(&self) -> u16 {
+        self.pattern_table(PPUCTRL::SPRITE_TABLE)
+    }
+
+    fn background_pattern_table(&self) -> u16 {
+        self.pattern_table(PPUCTRL::BG_TABLE)
+    }
+
+    fn sprite_width(&self) -> u8 {
+        if (self.ppu_ctrl & PPUCTRL::SPRITE_SIZE) == PPUCTRL::SPRITE_SIZE {
+            16
+        } else {
+            8
+        }
+    }
+    
+    fn is_nmi_generated(&self) -> bool {
+        (self.ppu_ctrl & PPUCTRL::VBLANK_NMI) == PPUCTRL::VBLANK_NMI
+    }
+
+    fn scroll_x(&self) -> u8 {
+        (self.ppu_scroll & 0xF0) >> 4
+    }
+
+    fn scroll_y(&self) -> u8 {
+        (self.ppu_scroll & 0x0F)
+    }
+
+    /* | BG pixel |Sprite pixel | Priority | Output    |
+     * |        0 |           0 |        X | BG ($3F00)|
+     * |        0 |         1-3 |        X | Sprite    |
+     * |      1-3 |           0 |        X | BG        |
+     * |      1-3 |         1-3 |        0 | Sprite    |
+     * |      1-3 |         1-3 |        1 | BG        |
+     */
+    fn display_pixel(&self, bg: u8, sp: u8, priority: u8) -> bool {
+        match (bg, sp, priority) {
+            (1 ... 3, 1 ... 3, 0) => true,
+            (1 ... 3, 1 ... 3, 1) => false,
+            (      0,       0, _) => false,
+            (      0, 1 ... 3, _) => true,
+            (_,             _, _) => false,
+        }
+    }
+
+    fn render_scanline(&mut self, cart: &mut INES) {
         
     }
 
     pub fn render(&mut self, cart: &mut INES) {
-        self.prerender(cart);
+
     }
 }

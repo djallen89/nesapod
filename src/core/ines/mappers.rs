@@ -48,7 +48,7 @@ pub mod sxrom {
         mirroring: Mirroring,
         prg_bank_mode: PrgBankMode,
         prg_ram_enable: bool,
-        chr_switch_4: bool,
+        pub chr_switch_4: bool,
         prg_bank: u8,
         chr_bank_0: u8,
         chr_bank_1: u8,
@@ -92,12 +92,16 @@ pub mod sxrom {
             }
         }
 
-        pub fn chr_read(&self, idx: u16) -> usize {
+        pub fn chr_bank_0(&self, idx: u16) -> u16 {
             if self.chr_switch_4 {
-                1
+                (self.chr_bank_0 << 3) as u16
             } else {
-                0
+                ((self.chr_bank_0 << 3) & 0b1111_0000) as u16
             }
+        }
+
+        pub fn chr_bank_1(&self, idx: u16) -> u16 {
+            (self.chr_bank_1 << 3) as u16
         }
 
         pub fn write(&mut self, addr: u16, val: u8) -> CPUResult<String> {
