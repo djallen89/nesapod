@@ -7,10 +7,13 @@ pub const SCANLINE_CYCLES: usize = 341;
 pub const IMAGE_SIZE: usize = SCANLINES * SCANLINE_LENGTH;
 //
 pub const NTSC_PALETTE: [(u8, u8, u8); 56] = [
-    (84,  84,  84),    (0,  30, 116),   (8,  16, 144),  (48,   0, 136),  (68,   0, 100),  (92,   0,  48),  (84,   4,   0),  (60,  24,   0),  (32,  42,   0),   (8,  58,   0),   (0,  64,   0),   (0,  60,   0),   (0,  50,  60),   (0,   0,   0),
-    (152, 150, 152),   (8,  76, 196),  (48,  50, 236),  (92,  30, 228), (136,  20, 176), (160,  20, 100), (152,  34,  32), (120,  60,   0),  (84,  90,   0),  (40, 114,   0),   (8, 124,   0),   (0, 118,  40),   (0, 102, 120),   (0,   0,   0),
-    (236, 238, 236),  (76, 154, 236), (120, 124, 236), (176,  98, 236), (228,  84, 236), (236,  88, 180), (236, 106, 100), (212, 136,  32), (160, 170,   0), (116, 196,   0),  (76, 208,  32),  (56, 204, 108),  (56, 180, 204),  (60,  60,  60),
-    (236, 238, 236), (168, 204, 236), (188, 188, 236), (212, 178, 236), (236, 174, 236), (236, 174, 212), (236, 180, 176), (228, 196, 144), (204, 210, 120), (180, 222, 120), (168, 226, 144), (152, 226, 180), (160, 214, 228), (160, 162, 160)
+    (84,  84,  84),   (0,  30, 116),    (8,  16, 144),  (48,   0, 136),  (68,   0, 100),  (92,   0,  48),  (84,   4,   0),  (60,  24,   0),
+    (32,  42,   0),   (8,  58,   0),    (0,  64,   0),   (0,  60,   0),   (0,  50,  60),   (0,   0,   0), (152, 150, 152),   (8,  76, 196),
+    (48,  50, 236),  (92,  30, 228),  (136,  20, 176), (160,  20, 100), (152,  34,  32), (120,  60,   0),  (84,  90,   0),  (40, 114,   0),
+    (8, 124,   0),   (0, 118,  40),     (0, 102, 120),   (0,   0,   0),  (236, 238, 236),  (76, 154, 236), (120, 124, 236), (176,  98, 236),
+    (228,  84, 236), (236,  88, 180), (236, 106, 100), (212, 136,  32), (160, 170,   0), (116, 196,   0),  (76, 208,  32),  (56, 204, 108),
+    (56, 180, 204),  (60,  60,  60),  (236, 238, 236), (168, 204, 236), (188, 188, 236), (212, 178, 236), (236, 174, 236), (236, 174, 212),
+    (236, 180, 176), (228, 196, 144), (204, 210, 120), (180, 222, 120), (168, 226, 144), (152, 226, 180), (160, 214, 228), (160, 162, 160)
 ];
 
 
@@ -93,6 +96,52 @@ bitflags! {
         const SPRITE_OVERFLOW = 0b0010_0000;
         const SPRITE_HIT = 0b0100_0000;
         const VBLANK = 0b1000_0000;
+    }
+}
+
+struct OAM {
+    pub y: u8,
+    idx: u8,
+    attributes: u8,
+    pub x: u8
+}
+
+impl OAM {
+    pub fn new(oam_ram: &[u8, 4]) -> OAM {
+        OAM {
+            y: oam_ram[0],
+            idx: oam_ram[1],
+            attributes: oam_ram[2],
+            x: oam_ram[3]
+        }
+    }
+
+    pub fn tile_idx(&self) -> u8 {
+        self.idx & 0b1111_1110
+    }
+
+    pub fn tile_bank(&self) -> u16 {
+        if self.idx & 1 == 1 {
+            0x0000
+        } else {
+            0x1000
+        }
+    }
+
+    pub fn attr_palette(&self) -> u8 {
+        (self.attributes & 0b0000_0011) + 4
+    }
+
+    pub fn priority(&self) -> bool {
+        self.attributes & 0b0010_0000 != 0b0010_0000
+    }
+
+    pub fn flip_horizontal(&self) -> bool {
+        self.attributes & 0b0100_0000 == 0b0100_0000
+    }
+
+    pub fn flip_vertical(&self) -> bool {
+        self.attributes & 0b1000_0000 == 0b1000_0000
     }
 }
 
@@ -199,11 +248,6 @@ impl PPU {
         self.oam_dma += 1;
     }
 
-    fn oam_read_4(&self, id: u8) -> (u8, u8, u8, u8) {
-        let idx = id as usize;
-        (self.oam_ram[idx], self.oam_ram[idx + 1], self.oam_ram[idx + 2], self.oam_ram[idx + 3])
-    }
-
     fn vram_increment(&mut self) {
         let increment = if (self.ppu_ctrl & PPUCTRL::VRAM_INCREMENT) == PPUCTRL::VRAM_INCREMENT {
             1
@@ -263,18 +307,31 @@ impl PPU {
      * |      1-3 |         1-3 |        0 | Sprite    |
      * |      1-3 |         1-3 |        1 | BG        |
      */
-    fn display_pixel(&self, bg: u8, sp: u8, priority: u8) -> bool {
+    fn display_pixel(&self, bg: u8, sp: u8, priority: bool) -> bool {
         match (bg, sp, priority) {
-            (1 ... 3, 1 ... 3, 0) => true,
-            (1 ... 3, 1 ... 3, 1) => false,
+            (1 ... 3, 1 ... 3, true) => true,
+            (1 ... 3, 1 ... 3, false) => false,
             (      0,       0, _) => false,
             (      0, 1 ... 3, _) => true,
             (_,             _, _) => false,
         }
     }
 
+    fn oam_pick_sprites(scanline: u8) -> Vec<OAM> {
+        let mut sprite_list = Vec::new();
+        let mut i = 0;
+        while i < 255 {
+            if self.oam_ram[i] == scanline {
+            }
+            i += 4;
+        }
+        if sprite_list.len() < 8 {
+            
+        }
+    }
+
     fn render_scanline(&mut self, cart: &mut INES) {
-        
+        let sprites = self.oam_pick_sprites();
     }
 
     pub fn render(&mut self, cart: &mut INES) {
