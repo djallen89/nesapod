@@ -307,7 +307,7 @@ impl PPU {
      * |      1-3 |         1-3 |        0 | Sprite    |
      * |      1-3 |         1-3 |        1 | BG        |
      */
-    fn display_pixel(&self, bg: u8, sp: u8, priority: bool) -> bool {
+    fn display_oam(&self, bg: u8, sp: u8, priority: bool) -> bool {
         match (bg, sp, priority) {
             (1 ... 3, 1 ... 3, true) => true,
             (1 ... 3, 1 ... 3, false) => false,
@@ -320,21 +320,25 @@ impl PPU {
     fn oam_pick_sprites(scanline: u8) -> Vec<OAM> {
         let mut sprite_list = Vec::new();
         let mut i = 0;
-        while i < 255 {
+        while i < 253 {
             if self.oam_ram[i] == scanline {
+                sprite_list.push(OAM::new(self.oam_ram[i .. i + 4]));
             }
             i += 4;
         }
+        
         if sprite_list.len() < 8 {
             
         }
     }
 
-    fn render_scanline(&mut self, cart: &mut INES) {
+    fn render_scanline(&mut self, cart: &mut INES, line: u8) {
         let sprites = self.oam_pick_sprites();
     }
 
     pub fn render(&mut self, cart: &mut INES) {
-
+        for scanline in 0 .. VISIBLE_SCANLINES {
+            self.render_scanline(scanline);
+        }
     }
 }
