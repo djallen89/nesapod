@@ -107,12 +107,20 @@ impl OAM {
      * 03 ... 0F | 0x40 | Sprite X coordinate
      */
     pub fn new(oam_ram: &[u8, 256], idx: u8) -> OAM {
-        debug_assert!((idx & 0x0F < 0x0C
         OAM {
             y: oam_ram[],
             idx: oam_ram[1],
             attributes: oam_ram[2],
             x: oam_ram[3]
+        }
+    }
+
+    pub fn initialized() -> OAM {
+        OAM {
+            y: 0xFF,
+            idx: 0xFF,
+            attributes: 0xFF,
+            x: 0xFF
         }
     }
 
@@ -319,16 +327,52 @@ impl PPU {
         }
     }
 
+    /* 2a. If n has overflowed back to zero (all 64 sprites evaluated), go to 4
+     * 2b. If less than 8 sprites have been found, go to 1
+     * 2c. If exactly 8 sprites have been found, disable writes to secondary OAM because it is full. 
+     * This causes sprites in back to drop out.
+     * 3. Starting at m = 0, evaluate OAM[n][m] as a Y-coordinate.
+     * 3a. If the value is in range, set the sprite overflow flag in $2002 and read the next 3 entries 
+     * of OAM (incrementing 'm' after each byte and incrementing 'n' when 'm' overflows); if m = 3, 
+     * increment n
+     * 3b. If the value is not in range, increment n and m (without carry). 
+     * If n overflows to 0, go to 4; otherwise go to 3
+     * The m increment is a hardware bug - if only n was incremented, the overflow flag would be set 
+     * whenever more than 8 sprites were present on the same scanline, as expected.
+     * 4. Attempt (and fail) to copy OAM[n][0] into the next free slot in secondary OAM, 
+     * and increment n (repeat until HBLANK is reached)
+     * Cycles 257-320: Sprite fetches (8 sprites total, 8 cycles per sprite)
+     * 1-4: Read the Y-coordinate, tile number, attributes, and X-coordinate of the selected sprite
+     * from secondary OAM
+     * 5-8: Read the X-coordinate of the selected sprite from secondary OAM 4 times 
+     * (while the PPU fetches the sprite tile data)
+     * For the first empty sprite slot, this will consist of sprite #63's Y-coordinate,
+     * followed by 3 $FF bytes; for subsequent empty sprite slots, this will be four $FF bytes
+     * Cycles 321-340+0: Background render pipeline initialization
+     * Read the first byte in secondary OAM 
+     * (while the PPU fetches the first two background tiles for the next scanline) */
     fn oam_pick_sprites(scanline: u8) -> Vec<OAM> {
+        /* Cycles 1-64: Secondary OAM is initialized to $FF - we can be a little more intelligent 
+         * and save that for later. */
         let mut sprite_list = Vec::new();
-        let mut i = 0;
-        while i < 253 {
+        /* Cycles 65-256: Sprite evaluation */
+        
+        /* Starting at n = 0 */
+        let mut n = 0;
+
+        while n < 253 {
+            /* read a sprite's Y-coordinate (OAM[n][0]), copying it to the next open 
+             * slot in secondary OAM (unless 8 sprites have been found, in which case the write is ignored).
+             * 1a. If Y-coordinate is in range, copy remaining bytes of sprite data (OAM[n][1] thru OAM[n][3]) 
+             * into secondary OAM.*/
+            
             if self.oam_ram[i] == scanline {
                 sprite_list.push(OAM::new(self.oam_ram[i .. i + 4]));
             }
-            i += 4;
+            /* 2. Increment n */
+            n += 4;
         }
-        
+
         if sprite_list.len() < 8 {
             
         }
