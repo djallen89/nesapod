@@ -1,5 +1,5 @@
 use std::{i8, u8, u16, fmt, iter};
-use core::ppu::PPU;
+use core::ppu::{IMAGE_SIZE, PPU};
 use core::ines::INES;
 use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleType};
 
@@ -131,6 +131,10 @@ impl fmt::Display for CPU {
 }
 
 impl CPU {
+    pub fn print_screen(&self) -> &[u8; IMAGE_SIZE] {
+        self.ppu.print_screen()
+    }
+    
     pub fn power_up(ines: INES) -> Result<CPU, String> {
         Ok(CPU {
             counter: 0,

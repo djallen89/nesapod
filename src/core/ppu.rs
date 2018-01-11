@@ -64,7 +64,7 @@ bitflags! {
         const SPRITE_TABLE =  0b0000_1000;
         const BG_TABLE =  0b0001_0000;
         const SPRITE_SIZE =  0b0010_0000;
-        const PPU_MS_SELECT =  0b0100_0000;
+        const _PPU_MS_SELECT =  0b0100_0000;
         const VBLANK_NMI =  0b1000_0000;
     }
 }
@@ -99,19 +99,13 @@ struct OAM {
 }
 
 impl OAM {
-    
-    /* OAM :
-     * 00 ... 0C | 0x40 | Sprite Y coordinate
-     * 01 ... 0D | 0x40 | Sprite tile #
-     * 02 ... 0E | 0x40 | Sprite attribute
-     * 03 ... 0F | 0x40 | Sprite X coordinate
-     */
-    pub fn new(oam_ram: &[u8, 256], idx: u8) -> OAM {
+    pub fn new(oam_ram: &[u8; 256], id: u8) -> OAM {
+        let idx = id as usize;
         OAM {
-            y: oam_ram[],
-            idx: oam_ram[1],
-            attributes: oam_ram[2],
-            x: oam_ram[3]
+            y: oam_ram[idx],
+            idx: oam_ram[idx + 1],
+            attributes: oam_ram[idx + 2],
+            x: oam_ram[idx + 3]
         }
     }
 
@@ -130,7 +124,7 @@ impl OAM {
 
     pub fn tile_bank(&self) -> u16 {
         if self.idx & 1 == 1 {
-            0x0000
+            0x0000 
         } else {
             0x1000
         }
@@ -308,8 +302,6 @@ impl PPU {
         (self.ppu_scroll & 0x0F)
     }
 
-    fn flip_vertical(&self, oam: OAM) -> OAM
-
     /* | BG pixel |Sprite pixel | Priority | Output    |
      * |        0 |           0 |        X | BG ($3F00)|
      * |        0 |         1-3 |        X | Sprite    |
@@ -327,17 +319,16 @@ impl PPU {
         }
     }
 
-    fn oam_pick_sprites(scanline: u8) -> Vec<OAM> {
+    fn oam_pick_sprites(&mut self, scanline: u8) -> Vec<OAM> {
         let mut sprite_list = Vec::new();
         let mut n = 0;
         loop {
             if self.oam_ram[n] == scanline {
-                sprite_list.push(OAM::new(self.oam_ram[n .. n + 4]));
+                sprite_list.push(OAM::new(&self.oam_ram, n as u8));
             }
 
             n += 4;
 
-            assert_debug!(n < 257);
             if n == 256 || sprite_list.len() == 8 {
                 break
             }
@@ -360,25 +351,41 @@ impl PPU {
             }
         }
 
-        while sprite_list.len() < 8 {
-            sprite_list.push([0xFF, 0xFF, 0xFF, 0xFF]);
+        if sprite_list.len() < 8 {
+            let mut oam = OAM::initialized();
+            oam.y = self.oam_ram[252];
+            sprite_list.push(oam);
+            while sprite_list.len() < 8 {
+                sprite_list.push(OAM::initialized());
+            }
         }
         sprite_list
     }
 
-    fn read_internal(&self, cart: &INES, idx: u16) -> u8 {
-        match idx {
-            0x
+    fn render_scanline(&mut self, cart: &mut INES, line: usize) {
+        let sprite_slivers = self.oam_pick_sprites(line as u8);
+        for sprite in sprite_slivers.iter() {
+            for n in 0 .. 8 {
+                //let nametable = 
+                let x = sprite.x as usize;
+                let sprite_top = cart.ppu_read(sprite.tile_bank() + (sprite.tile_idx() as u16), &self.video_ram);
+                if x + n < 256 {
+                    self.image[line * SCANLINE_LENGTH  + x + n] = 0xFF;
+                }
+            }
         }
-    }
-
-    fn render_scanline(&mut self, cart: &mut INES, line: u8) {
-        let sprites = self.oam_pick_sprites();
     }
 
     pub fn render(&mut self, cart: &mut INES) {
+        //self.image = [0; IMAGE_SIZE];
+        self.ppu_status &= !(PPUSTATUS::SPRITE_HIT | PPUSTATUS::SPRITE_OVERFLOW);
+        
         for scanline in 0 .. VISIBLE_SCANLINES {
-            self.render_scanline(scanline);
+            self.render_scanline(cart, scanline);
         }
+    }
+
+    pub fn print_screen(&self) -> &[u8; IMAGE_SIZE] {
+        &self.image
     }
 }

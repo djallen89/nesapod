@@ -92,16 +92,29 @@ pub mod sxrom {
             }
         }
 
-        pub fn chr_bank_0(&self, idx: u16) -> u16 {
+        fn chr_bank_0(&self) -> u16 {
             if self.chr_switch_4 {
-                (self.chr_bank_0 << 3) as u16
+                (self.chr_bank_0 << 3) as u16 
             } else {
                 ((self.chr_bank_0 << 3) & 0b1111_0000) as u16
             }
         }
 
-        pub fn chr_bank_1(&self, idx: u16) -> u16 {
+        fn chr_bank_1(&self) -> u16 {
             (self.chr_bank_1 << 3) as u16
+        }
+
+        pub fn chr_read(&self, idx: u16) -> u16 {
+            let bank = if self.chr_switch_4 {
+                match idx {
+                    0x0000 ... 0x0FFF => self.chr_bank_0(),
+                    0x1000 ... 0x1FFF => self.chr_bank_1(),
+                    _ => panic!("Misuse of SXROM chr read!")
+                }
+            } else {
+                self.chr_bank_0()
+            };
+            bank + idx
         }
 
         pub fn write(&mut self, addr: u16, val: u8) -> CPUResult<String> {
@@ -356,8 +369,8 @@ impl Mapper {
     pub fn new(id: u8, mirroring: u8) -> Mapper {
         match id {
             0 => Mapper::NROM,
-            001 | 105 | 155 => Mapper::SXROM(sxrom::SxRom::new(id, mirroring, true)),
-            002 | 094 | 180 => Mapper::UXROM(UxRom::new(id)),
+            001 | 105 | 155 | 002 => Mapper::SXROM(sxrom::SxRom::new(id, mirroring, true)),
+             094 | 180 => Mapper::UXROM(UxRom::new(id)),
             003 | 185 => Mapper::CNROM(CnRom::new(id)),
             004 | 118 | 119 => Mapper::TXROM(TxRom::new(id)),
             005 => Mapper::MMC5,
