@@ -136,7 +136,7 @@ pub fn main(logging: bool, rom: Option<String>, dump: bool) {
         let mut screen_image = String::new();
         for scanline in 0 .. 240 {
             for pixel in 0 .. 256 {
-                screen_image.push_str(&format!("{:01X}", screen[scanline * 256 + pixel] / 16));
+                screen_image.push_str(&format!("{}", screen[scanline * 256 + pixel] as char));
             }
             screen_image.push_str("\n");
         }
@@ -287,9 +287,9 @@ mod support {
             let last_update = self.last_update;
             let sixteen_ms = std::time::Duration::from_millis(16);
             let duration_since_last_update = std::time::Instant::now().duration_since(last_update);
-            if duration_since_last_update < sixteen_ms {
-                std::thread::sleep(sixteen_ms - duration_since_last_update);
-            }
+            //if duration_since_last_update < sixteen_ms {
+            //std::thread::sleep(sixteen_ms - duration_since_last_update);
+            //}
 
             let mut events = Vec::new();
             events_loop.poll_events(|event| events.push(event));
