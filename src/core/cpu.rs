@@ -174,7 +174,7 @@ impl CPU {
     pub fn power_up(ines: INES) -> Result<CPU, String> {
         Ok(CPU {
             counter: 0,
-            pc: 0xc5F1,
+            pc: RESET_VECTOR,
             stack_pointer: POWERUP_S,
             axy: vec![0, 0, 0],
             aio_registers: vec![0; 32],
@@ -191,10 +191,9 @@ impl CPU {
     }
 
     pub fn reset(&mut self) -> CPUResult<String> {
-        //UNDO WHEN NOT IN NESTEST MODE
-        //self.stack_pointer -= 3;
-        self.pc = 0xC001;
-        self.last_read_bytes = format!("C000  {:02X} ", 0x4C);
+        self.stack_pointer -= 3;
+        self.pc = RESET_VECTOR;
+        self.last_read_bytes = format!("{:04X}  {:02X} ", RESET_VECTOR, 0x4C);
         self.last_instr = format!(" JMP ");
         self.status_register = self.status_register | StatusFlags::I;
         let (jmp, absolute, cycles) = OPCODE_TABLE[0x4C];
@@ -252,8 +251,9 @@ impl CPU {
         match address {
             0x0000 ... 0x1FFF => Ok(self.ram[(address % 2048) as usize]),
             0x2000 ... 0x3FFF => Ok(self.ppu.read(address)),
-            0x4000 ... 0x4017 => Ok(self.aio_registers[(address - 0x4000) as usize]),
-            0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
+            0x4014            => Ok(self.ppu.oam_dma_read()),
+            0x4000 ... 0x401F => Ok(self.aio_registers[(address - 0x4000) as usize]),
+            //0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
             0x4020 ... 0xFFFF => self.cartridge.read(address),
             _ => Err(format!("I dunno lol"))
         }
@@ -290,13 +290,13 @@ impl CPU {
                 self.counter += 514;
                 Ok(format!("Wrote {:04X} to {:04X} to PPU OAM", page, page + 255))
             }
-            0x4000 ... 0x4013 | 0x4015 ... 0x4017 => {
+            0x4000 ... 0x4013 | 0x4015 ... 0x401F => {
                 let pre = self.aio_registers[(address - 0x4000) as usize];
                 self.last_instr.push_str(&format!("= {:02X}", pre));
                 self.aio_registers[(address - 0x4000) as usize] = val;
                 Ok(format!("Wrote {:02X} to address {:04X}", val, address))
             },
-            0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
+            //0x4018 ... 0x401F => Err(format!("CPU test mode not yet implemnted!")),
             0x4020 ... 0xFFFF => {
                 let pre = self.cartridge.read(address)?;
                 self.last_instr.push_str(&format!("= {:02X}", pre));

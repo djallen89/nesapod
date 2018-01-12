@@ -245,6 +245,10 @@ impl PPU {
         }
     }
 
+    pub fn oam_dma_read(&self) -> u8 {
+        self.oam_ram[self.oam_dma as usize]
+    }
+
     pub fn oam_dma_write(&mut self, val: u8) {
         self.oam_ram[self.oam_dma as usize] = val;
         self.oam_dma += 1;
