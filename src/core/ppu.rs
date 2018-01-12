@@ -73,15 +73,17 @@ bitflags! {
     pub struct PPUMASK: u8 {
         const INIT = 0;
         const GRAY = 0b0000_0001;
-        const BGL8 = 0b0000_0010;
-        const SPL8 = 0b0000_0100;
-        const BGALL = 0b0000_1000;
-        const SPALL = 0b0001_0000;
+        const BGL8_ENABLE = 0b0000_0010;
+        const SPL8_ENABLE = 0b0000_0100;
+        const BG_ENABLE = 0b0000_1000;
+        const SP_ENABLE = 0b0001_0000;
         const RED = 0b0010_0000;
         const GRN = 0b0100_0000;
         const BLU = 0b1000_0000;
     }
 }
+
+http://searchfox.org/mozilla-central/rev/f54c1723befe6bcc7229f005217d5c681128fcad/memory/build/rb.h
 
 bitflags! {
     pub struct PPUSTATUS: u8 {
@@ -163,7 +165,9 @@ pub struct PPU {
     oam_ram: [u8; 256],
     cycles: u32,
     even_frame: bool,
-    image: [u8; IMAGE_SIZE]
+    rear_sprites: [u8; IMAGE_SIZE],
+    background: [u8; IMAGE_SIZE],
+    fore_sprites: [u8; IMAGE_SIZE]
 }
 
 impl PPU {
@@ -184,7 +188,9 @@ impl PPU {
             oam_ram: [0x00; 256],
             cycles: 0,
             even_frame: false,
-            image: [0; IMAGE_SIZE]
+            rear_sprites: [0; IMAGE_SIZE],
+            background: [0; IMAGE_SIZE],
+            fore_sprites: [0; IMAGE_SIZE],
         }
     }
 
@@ -278,6 +284,16 @@ impl PPU {
         }
     }
 
+    fn is_render_enabled(&self) -> bool {
+        (self.ppu_mask & PPUMASK::BG_ENABLE == PPUMASK::BG_ENABLE) ||
+            (self.ppu_mask & PPUMASK::SP_ENABLE == PPUMASK::SP_ENABLE)
+    }
+
+    fn is_clipping(&self) -> bool {
+        (self.ppu_mask & PPUMASK::BGL8_ENABLE == PPUMASK::BGL8_ENABLE) ||
+            (self.ppu_mask & PPUMASK::SPL8_ENABLE == PPUMASK::SPL8_ENABLE)
+    }
+    
     fn sprite_pattern_table(&self) -> u16 {
         self.pattern_table(PPUCTRL::SPRITE_TABLE)
     }
@@ -292,6 +308,14 @@ impl PPU {
         } else {
             8
         }
+    }
+
+    fn end_vblank(&mut self) {
+        self.ppu_status &= !(PPUSTATUS::SPRITE_HIT | PPUSTATUS::SPRITE_OVERFLOW);
+    }
+
+    fn start_vblank(&mut self) {
+        self.ppu_status |= PPUSTATUS::VBLANK;
     }
 
     fn is_nmi_generated(&self) -> bool {
@@ -366,6 +390,9 @@ impl PPU {
         sprite_list
     }
 
+    fn draw_background(&mut self, cart: &mut INES) {
+    }
+
     fn render_scanline(&mut self, cart: &mut INES, line: usize) {
         let sprite_slivers = self.oam_pick_sprites(line as u8);
         for sprite in sprite_slivers.iter() {
@@ -374,7 +401,7 @@ impl PPU {
                 let x = sprite.x as usize;
                 let sprite_top = cart.ppu_read(sprite.tile_bank() + (sprite.tile_idx() as u16), &self.video_ram);
                 if x + n < 256 {
-                    self.image[line * SCANLINE_LENGTH  + x + n] = 0xFF;
+                    self.rear_sprites[line * SCANLINE_LENGTH  + x + n] = 0xFF;
                 }
             }
         }
@@ -382,7 +409,7 @@ impl PPU {
 
     pub fn render(&mut self, cart: &mut INES) -> bool {
         //self.image = [0; IMAGE_SIZE];
-        self.ppu_status &= !(PPUSTATUS::SPRITE_HIT | PPUSTATUS::SPRITE_OVERFLOW);
+        self.end_vblank();
         
         for scanline in 0 .. VISIBLE_SCANLINES {
             self.render_scanline(cart, scanline);
@@ -393,6 +420,6 @@ impl PPU {
     }
 
     pub fn print_screen(&self) -> &[u8; IMAGE_SIZE] {
-        &self.image
+        &self.background
     }
 }
