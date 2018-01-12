@@ -306,7 +306,7 @@ impl INES {
 
     pub fn ppu_read(&self, idx: u16, vram: &[u8; 2048]) -> u8 {
         match self.mapper {
-            Mapper::NROM => vram[idx as usize],
+            Mapper::NROM => vram[(idx % 2048) as usize],
             Mapper::SXROM(ref sxrom) => match idx {
                 0x0000 ... 0x1FFF => self.chr_mem[sxrom.chr_read(idx) as usize],
                 _ => vram[idx as usize]

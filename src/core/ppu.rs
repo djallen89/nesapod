@@ -289,7 +289,7 @@ impl PPU {
             8
         }
     }
-    
+
     fn is_nmi_generated(&self) -> bool {
         (self.ppu_ctrl & PPUCTRL::VBLANK_NMI) == PPUCTRL::VBLANK_NMI
     }
@@ -376,13 +376,16 @@ impl PPU {
         }
     }
 
-    pub fn render(&mut self, cart: &mut INES) {
+    pub fn render(&mut self, cart: &mut INES) -> bool {
         //self.image = [0; IMAGE_SIZE];
         self.ppu_status &= !(PPUSTATUS::SPRITE_HIT | PPUSTATUS::SPRITE_OVERFLOW);
         
         for scanline in 0 .. VISIBLE_SCANLINES {
             self.render_scanline(cart, scanline);
         }
+
+        self.even_frame = !self.even_frame;
+        self.is_nmi_generated()
     }
 
     pub fn print_screen(&self) -> &[u8; IMAGE_SIZE] {

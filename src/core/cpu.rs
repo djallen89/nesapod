@@ -8,6 +8,7 @@ pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
 pub const FRAME_TIMING: u16 = 29781;
 pub const RESET_VECTOR: u16 = 0xFFFC;
+pub const NMI_VECTOR: u16 = 0xFFFA;
 pub const IRQ_VECTOR: u16 = 0xFFFE;
 pub const STACK_REGION: u16 = 0x0100;
 pub const A: usize = 0;
@@ -85,7 +86,7 @@ pub fn counter_inc(x: u16, y: u8) -> u16 {
 pub enum Code {
     LDA, LDX, LDY, LAX,
     STA, STX, STY, ASX,
-    ADC, SBC, 
+    ADC, SBC, _SB,
     INC, INX, INY, INS,
     DEC, DEX, DEY, DCM,
     ASL, LSR, ALR,
@@ -99,11 +100,37 @@ pub enum Code {
     JMP, JSR, RTS, RTI,
     SEC, SED, SEI,
     CLC, CLD, CLI, CLV, 
-    NOP, BRK,
+    NOP, _NP, BRK,
     SLO, RLA, LSE, RRA,
     ARR, XAA, OAL, SAX,
     TAS, SAY, XAS, AXA,
     ILL
+}
+
+impl fmt::Display for Code {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let code = format!("{:?}", self);
+        match *self {
+            Code::LDA | Code::LDX | Code::LDY | Code::STA | Code::STX | Code::STY |
+            Code::ADC | Code::SBC | Code::INC | Code::INX | Code::INY | Code::DEC | Code::DEX | Code::DEY |
+            Code::ASL | Code::LSR | Code::ROL | Code::ROR | Code::AND | Code::EOR | Code::ORA |
+            Code::CMP | Code::CPX | Code::CPY | Code::BIT |
+            Code::BCC | Code::BCS | Code::BEQ | Code::BNE | Code::BPL | Code::BVC | Code::BVS | Code::BMI |
+            Code::TAX | Code::TXA | Code::TAY | Code::TYA | Code::TSX | Code::TXS |
+            Code::PHA | Code::PLA | Code::PHP | Code::PLP | Code::JMP | Code::JSR | Code::RTS | Code::RTI |
+            Code::SEC | Code::SED | Code::SEI | Code::CLC | Code::CLD | Code::CLI | Code::CLV |
+            Code::NOP | Code::BRK | Code::ILL => write!(f, " {}", code),
+            Code::LAX | Code::SAX | Code::ALR | Code::SLO | Code::RLA |
+            Code::RLA | Code::RRA | Code::ARR | Code::XAA | Code::OAL | Code::TAS | Code::SAY |
+            Code::XAS | Code::AXA => write!(f, "*{}", code),
+            Code::_SB => write!(f, "*SBC"),
+            Code::_NP => write!(f, "*NOP"),
+            Code::ASX => write!(f, "*SAX"),
+            Code::DCM => write!(f, "*DCP"),
+            Code::INS => write!(f, "*ISB"),
+            Code::LSE => write!(f, "*SRE"),
+        }
+    }
 }
 
 pub struct CPU {
@@ -115,6 +142,7 @@ pub struct CPU {
     status_register: StatusFlags,
     ram: [u8; 2048],
     ppu: PPU,
+    nmi: bool,
     cartridge: INES,
     last_read_bytes: String,
     last_instr: String,
@@ -123,8 +151,16 @@ pub struct CPU {
 
 impl fmt::Display for CPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let spaces1: String = iter::repeat(' ').take(16 - self.last_read_bytes.len()).collect();
-        let spaces2: String = iter::repeat(' ').take(32 - self.last_instr.len()).collect();
+        let spaces1: String = if self.last_read_bytes.len() >= 15 {
+            format!("")
+        } else {
+            iter::repeat(' ').take(15 - self.last_read_bytes.len()).collect()
+        };
+        let spaces2: String = if self.last_instr.len() >= 33 {
+            format!("")
+        } else {
+            iter::repeat(' ').take(33 - self.last_instr.len()).collect()
+        };
         write!(f, "{}{}{}{}", self.last_read_bytes, spaces1, self.last_instr, spaces2)?;
         write!(f, "{}", self.last_registers)
     }
@@ -138,13 +174,14 @@ impl CPU {
     pub fn power_up(ines: INES) -> Result<CPU, String> {
         Ok(CPU {
             counter: 0,
-            pc: RESET_VECTOR,
+            pc: 0xc5F1,
             stack_pointer: POWERUP_S,
             axy: vec![0, 0, 0],
             aio_registers: vec![0; 32],
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
             ppu: PPU::init(),
+            nmi: false,
             cartridge: ines,
             last_read_bytes: format!(""),
             last_instr: format!(""),
@@ -154,11 +191,14 @@ impl CPU {
     }
 
     pub fn reset(&mut self) -> CPUResult<String> {
-        self.stack_pointer -= 3;
-        self.pc = RESET_VECTOR;
+        //UNDO WHEN NOT IN NESTEST MODE
+        //self.stack_pointer -= 3;
+        self.pc = 0xC001;
+        self.last_read_bytes = format!("C000  {:02X} ", 0x4C);
+        self.last_instr = format!(" JMP ");
         self.status_register = self.status_register | StatusFlags::I;
-        //self.step()
-        self.execute(Code::JMP, Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)), 5)
+        let (jmp, absolute, cycles) = OPCODE_TABLE[0x4C];
+        self.execute(jmp, absolute, cycles)
     }
 
     pub fn shut_down(self) -> INES {
@@ -166,28 +206,42 @@ impl CPU {
     }
 
     pub fn dump_ram(&self) -> String {
-        //let lsb = self.ram[1] as usize;
-        //let msb = self.ram[2] as usize;
-        //format!("{:02X} {:02X}", lsb, msb)
         self.cartridge.dump_ram()
     }
 
-    pub fn step(&mut self) -> CPUResult<String> {
+    fn handle_nmi(&mut self) -> CPUResult<String> {
+        let pc = self.pc + 1;
+        self.stack_push_double(pc)?;
+        let flags = self.status_register.bits;
+        self.stack_push(flags)?;
+        self.pc = NMI_VECTOR;
+        let (brk, address, cycles) = OPCODE_TABLE[0x00];
+        self.execute(brk, address, cycles)
+    }
+
+    pub fn step(&mut self) -> CPUResult<String> {        
         self.last_instr = format!("");
         let last_registers = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
                                      self.axy[A], self.axy[X],
                                      self.axy[Y], self.status_register.bits,
                                      self.stack_pointer);
         self.last_registers = last_registers;
+
+        if self.nmi {
+            return self.handle_nmi()
+        }
+
         let addr = self.pc;
         let opcode = self.read(addr)?;
         self.last_read_bytes = format!("{:04X}  {:02X} ", addr, opcode);
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
-        self.last_instr = format!("{:?} ", code);
-        if self.counter >= (FRAME_TIMING - 7) / 3 {
-            self.ppu.render(&mut self.cartridge);
+        self.last_instr = format!("{} ", code);
+
+        if self.counter >= (FRAME_TIMING - 7) / 3 {            
+            self.nmi = self.ppu.render(&mut self.cartridge);
             self.counter = 0; 
         }
+        
         let val = self.pc;
         self.pc = val.wrapping_add(1);
         self.execute(code, address, cycles)
@@ -499,7 +553,7 @@ impl CPU {
             },
             
             Code::ADC => self.add(a, min_cycles),
-            Code::SBC => self.sub(a, min_cycles),
+            Code::SBC | Code::_SB => self.sub(a, min_cycles),
             
             Code::INC => self.inc(a, min_cycles, None),
             Code::INX => self.inc(a, min_cycles, Some(X)),
@@ -507,10 +561,6 @@ impl CPU {
             Code::INS => self.address_rmw(a, min_cycles, "INS: INC -> SBC", None, &|cpu, val| {
                 let result = val.wrapping_add(1);
                 let lhs = cpu.axy[A];
-                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-                    cpu.last_instr.push_str(&format!("= {:02X}", val));
-                }
-
                 let (final_result, next_carry, overflow) = cpu.adc(!result);
                 cpu.set_cznv(final_result, next_carry, overflow);
                 cpu.axy[A] = final_result;
@@ -523,9 +573,6 @@ impl CPU {
             Code::DCM => self.address_rmw(a, min_cycles, "DCM: DEC -> CMP", None, &|cpu, val| {
                 let result = val.wrapping_sub(1);
                 let lhs = cpu.axy[A];
-                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-                    cpu.last_instr.push_str(&format!("= {:02X}", val));
-                } 
                 let final_result = lhs.wrapping_sub(result);
                 let carry = lhs >= result;
                 cpu.set_czn(final_result, carry);
@@ -572,42 +619,29 @@ impl CPU {
                 let (result, carry) = asl(val);
                 cpu.set_czn(result, carry);
                 
-                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-                    cpu.last_instr.push_str(&format!("= {:02X}", val));
-                }
                 cpu.bitwise_helper(result, &|x, y| { x | y });
-                cpu.axy[A]
+                result
             }),
             Code::RLA => self.address_rmw(a, min_cycles, "RLA: ROL -> AND", Some(A), &|cpu, val| {
                 if a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
-                let (result, next_carry) = cpu.ror(val);
+                let (result, next_carry) = cpu.rol(val);
                 cpu.set_czn(result, next_carry);
                 
-                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-                    cpu.last_instr.push_str(&format!("= {:02X}", val));
-                }
                 cpu.bitwise_helper(result, &|x, y| { x & y });
-                cpu.axy[A]
+                result
             }),
             Code::LSE => self.address_rmw(a, min_cycles, "LSE: LSR -> EOR", Some(A), &|cpu, val| {
                 let (result, carry) = lsr(val);
                 cpu.set_czn(result, carry);
                 
-                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-                    cpu.last_instr.push_str(&format!("= {:02X}", val));
-                }
                 cpu.bitwise_helper(result, &|x, y| { x ^ y });
-                cpu.axy[A]
+                result
             }),
             Code::RRA => self.address_rmw(a, min_cycles, "RRA: ROR -> ADC", Some(A), &|cpu, val| {
                 let (result, next_carry) = cpu.ror(val);
                 cpu.set_czn(result, next_carry);
-
-                if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-                    cpu.last_instr.push_str(&format!("= {:02X}", val));
-                }
 
                 let (final_result, next_carry, overflow) = cpu.adc(result);
                 cpu.set_cznv(final_result, next_carry, overflow);
@@ -845,13 +879,17 @@ impl CPU {
             Code::CLI => self.clear_flag(min_cycles, StatusFlags::I),
             Code::CLV => self.clear_flag(min_cycles, StatusFlags::V),
             
-            Code::NOP => {
-                let (bytes, extra_cycle, _) = if a != Address::Implied {
-                    self.address_read(a, None)?
+            Code::NOP | Code::_NP  => { 
+                if a != Address::Implied {
+                    let (bytes, extra_cycle, val) = self.address_read(a, None)?;
+                    if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                        self.last_instr.push_str(&format!("= {:02X}", val));
+                    }
+                    self.modify_pc_counter(bytes, min_cycles + extra_cycle);
                 } else {
-                    (0, 0, 0)
-                };
-                self.modify_pc_counter(bytes, min_cycles + extra_cycle);
+                    self.modify_pc_counter(0, min_cycles);
+                }
+
                 Ok(format!("NOP"))
             },
             

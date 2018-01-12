@@ -7,8 +7,8 @@ use core::cpu::CPU;
 use core::ines::INES;
 use glium::glutin::VirtualKeyCode as VKC;
 
-const WIDTH: u32 = 1600;
-const HEIGHT: u32 = 1200;
+const WIDTH: u32 = 900;
+const HEIGHT: u32 = 700;
 
 struct Fonts {
     regular: conrod::text::font::Id,
@@ -133,17 +133,16 @@ pub fn main(logging: bool, rom: Option<String>, dump: bool) {
         }
 
         let screen = emulator.print_screen();
-        let mut screen_image = String::new();
+        /*let mut screen_image = String::new();
         for scanline in 0 .. 240 {
             for pixel in 0 .. 256 {
                 screen_image.push_str(&format!("{}", screen[scanline * 256 + pixel] as char));
             }
             screen_image.push_str("\n");
-        }
+        }*/
 
         let msg = debugger.output();
-        println!("{}", msg);
-        set_ui(ui.set_widgets(), &ids, &fonts, &screen_image);
+        set_ui(ui.set_widgets(), &ids, &fonts, &msg);
         // Render the `Ui` and then display it on the screen.
         if let Some(primitives) = ui.draw_if_changed() {
             renderer.fill(&display, primitives, &image_map);
@@ -207,9 +206,9 @@ mod support {
             border_width: 0.0,
             label_color: conrod::color::WHITE,
             font_id: None,
-            font_size_large: 12,
-            font_size_medium: 8,
-            font_size_small: 6,
+            font_size_large: 16,
+            font_size_medium: 14,
+            font_size_small: 12,
             widget_styling: conrod::theme::StyleMap::default(),
             mouse_drag_threshold: 0.0,
             double_click_threshold: std::time::Duration::from_millis(500),
