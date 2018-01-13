@@ -16,7 +16,7 @@ struct Fonts {
     bold: conrod::text::font::Id,
 }
 
-pub fn main(logging: bool, rom: Option<String>, dump: bool) {
+pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
     
     let mut debugger = core::Debug::new(32, logging);
     let romname = match rom {
@@ -29,7 +29,7 @@ pub fn main(logging: bool, rom: Option<String>, dump: bool) {
         Err(f) => panic!(f)
     };
     
-    let mut emulator = match CPU::power_up(ines) {
+    let mut emulator = match CPU::power_up(ines, debug) {
         Ok(emu) => emu,
         Err(f) => panic!(f)
     };
@@ -107,6 +107,8 @@ pub fn main(logging: bool, rom: Option<String>, dump: bool) {
                             VKC::L => 1 << 8,
                             VKC::Z => 1 << 12,
                             VKC::T => 1 << 16,
+                            VKC::M => 1 << 20,
+                            VKC::U => 1 << 24,
                             _ => 0
                         };
                         while steps > 0 {
@@ -114,7 +116,7 @@ pub fn main(logging: bool, rom: Option<String>, dump: bool) {
                                 Ok(_) => debugger.input(&format!("{}\n", emulator)),
                                 Err(f) => {
                                     debugger.input(&format!("{}\n", emulator));
-                                    debugger.input(&format!("{}\n", f));
+                                    debugger.input(&format!("{:?}\n", f));
                                     break;
                                 }
                             }
@@ -171,7 +173,7 @@ widget_ids!{
 }
 
 fn set_ui(ref mut ui: conrod::UiCell, ids: &Ids, fonts: &Fonts, msg: &str) {
-    use conrod::{color, widget, Colorable, Positionable, Scalar, Sizeable, Widget};
+    use conrod::{color, widget, Colorable, Positionable, Scalar, Widget};
 
     widget::Canvas::new().flow_right(&[
         (ids.middle_col, widget::Canvas::new().color(color::DARK_CHARCOAL)),

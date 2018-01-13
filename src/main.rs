@@ -20,7 +20,8 @@ fn main() {
     let program = args[0].clone();
     let mut opts = Options::new();
     opts.optopt("r", "rom", "select a rom", ".nes");
-    opts.optflag("d", "dump", "dump contents of prg-RAM for debugging");
+    opts.optflag("p", "dump", "dump contents of prg-RAM for debugging");
+    opts.optflag("d", "debug", "debug CPU");
     opts.optflag("l", "log", "log messages to a file");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
@@ -34,13 +35,14 @@ fn main() {
     }
 
     let log = matches.opt_present("l");
-    let dump = matches.opt_present("d");
+    let dump = matches.opt_present("p");
+    let debug = matches.opt_present("d");
     let rom = if matches.opt_present("r") {
         matches.opt_str("r")
     } else {
         None
     };
 
-    nesapod::main(log, rom, dump)
+    nesapod::main(log, rom, debug, dump)
 }
 

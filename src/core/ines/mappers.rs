@@ -117,12 +117,12 @@ pub mod sxrom {
             bank + idx
         }
 
-        pub fn write(&mut self, addr: u16, val: u8) -> CPUResult<String> {
+        pub fn write(&mut self, addr: u16, val: u8) {
             let len = self.sr_len();
             if len < 4 {
                 self.shift_register(val)
             } else if len == 4 {
-                self.shift_register(val)?;
+                self.shift_register(val);
                 self.set_register(addr)
             } else {
                 panic!(format!("Impossible shift register length {}", len))
@@ -137,14 +137,12 @@ pub mod sxrom {
             bit + 1
         }
 
-        fn shift_register(&mut self, val: u8) -> CPUResult<String> {
+        fn shift_register(&mut self, val: u8) {
             if val > 127 {
                 self.shift_register = 0;
-                Ok(format!("Reset SxROM shift register"))
             } else {
                 self.shift_register <<= 1;
                 self.shift_register += val & 0x01;
-                Ok(format!("Shifted SxROM shift register; {:b}", self.shift_register))
             }
         }
 
@@ -159,7 +157,7 @@ pub mod sxrom {
             res
         }
 
-        fn set_register(&mut self, addr: u16) -> CPUResult<String> {
+        fn set_register(&mut self, addr: u16) {
             match addr {
                 0x8000 ... 0x9FFF => {
                     let chr_mode = self.sr_drain(1) == 1;
@@ -171,29 +169,22 @@ pub mod sxrom {
                     let prg_mode = self.sr_drain(2);
                     self.prg_bank_mode = PrgBankMode::set(prg_mode);
 
-                    Ok(format!("Set control register to {:?} {:?} 4 kB switching: {}",
-                               self.mirroring, self.prg_bank_mode, self.chr_switch_4))
                 },
                 0xA000 ... 0xBFFF => {
                     let val = self.sr_drain(5);
                     self.chr_bank_0 = val;
-                    Ok(format!("Set chr bank 0 to {:X}", val))
                 },
                 0xC000 ... 0xDFFF => {
                     let val = self.sr_drain(5);
                     self.chr_bank_1 = val;
-                    Ok(format!("Set chr bank 1 to {:X}", val))
                 },
                 0xE000 ... 0xFFFF | _ => {
                     let prg_ram_enable = self.sr_drain(1) == 1;
                     let val = self.sr_drain(4);
                     self.prg_bank = val;
                     if self.id == 155 {
-                        Ok(format!("Dind't change prg ram chip enable; 155, rom bank: {}", self.prg_bank))
                     } else {
                         self.prg_ram_enable = prg_ram_enable;
-                        Ok(format!("Set prg bank to: ram enabled {}, rom bank: {}",
-                                   self.prg_ram_enable, self.prg_bank))
                     }
                 }
             }

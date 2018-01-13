@@ -6,3 +6,4 @@ pub mod ppu;
 pub mod apu;
 
 pub use self::debug::Debug;
+pub use self::cpu::EmuError;

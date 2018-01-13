@@ -83,8 +83,6 @@ bitflags! {
     }
 }
 
-http://searchfox.org/mozilla-central/rev/f54c1723befe6bcc7229f005217d5c681128fcad/memory/build/rb.h
-
 bitflags! {
     pub struct PPUSTATUS: u8 {
         const SPRITE_OVERFLOW = 0b0010_0000;

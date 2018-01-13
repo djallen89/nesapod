@@ -9,16 +9,6 @@ pub enum Address {
     Invalid,
 }
 
-impl Address {
-    pub fn len(self) -> u16 {
-        match self {
-            Address::Specified(AddressType::SingleByte(_)) => 1,
-            Address::Specified(AddressType::DoubleByte(_)) => 2,
-            Address::Implied | Address::Acc | Address::Invalid => 0
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AddressType {
     SingleByte(SingleType),

@@ -5,12 +5,14 @@ use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::str;
 use core::ines::mappers::Mapper;
-use core::cpu::CPUResult;
+use core::EmuError;
 
 mod mappers; 
 
 const MIN_INES_SIZE: u64 = 16 + 16384 + 8192;
 const INES_MAGIC_CODE: [u8; 4] = [0x4E, 0x45, 0x53, 0x1A];
+
+type MMUResult<T> = Result<T, EmuError>;
 
 bitflags! {
     pub struct Flags6: u8 {
@@ -76,8 +78,7 @@ impl Header {
         
         if magic != INES_MAGIC_CODE {
             return Err(IOError::new(
-                ErrorKind::Other,
-                format!("Expected `NES' + MS-DOS EOF, got {:?}", magic)));
+                ErrorKind::Other, format!("Expected `NES' + MS-DOS EOF, got {:?}", magic)))
         }
 
         header.prg_rom = reader.next().unwrap()?;
@@ -105,8 +106,7 @@ impl Header {
         //discard 10flags
         if padding != [0, 0, 0, 0, 0] { 
             Err(IOError::new(
-                ErrorKind::Other,
-                format!("Expected 5 0 bytes, found {:?}", padding)))
+                ErrorKind::Other, format!("Expected 5 0 bytes, found {:?}", padding)))
         } else {
             Ok(header)
         }
@@ -122,22 +122,22 @@ impl Header {
     
     /// Create representation of ROM with filled rest of file. On completion file should
     /// be exhausted.
-    pub fn fill_mem(&self, size: usize, fbytes: &mut Bytes<File>) -> CPUResult<Vec<u8>> {
+    pub fn fill_mem(&self, size: usize, fbytes: &mut Bytes<File>) -> Vec<u8> {
         let mut data = Vec::with_capacity(size);
         for i in 0..size {
             match fbytes.next() {
                 Some(x) => match x {
                     Ok(x) => data.push(x),
-                    Err(f) => return Err(format!("{}: Unexpected file end at byte {}", f, i))
+                    Err(f) => panic!(format!("{}: Unexpected file end at byte {}", f, i))
                 },
-                None => return Err(format!("Unexpected file end at byte {}", i))
+                None => panic!(format!("Unexpected file end at byte {}", i))
             }
         }
 
         if data.len() == size {
-            Ok(data)
+            data
         } else {
-            Err(format!("Expected {} bytes, found {}", size, data.len()))
+            panic!(format!("Expected {} bytes, found {}", size, data.len()))
         }
     }
 
@@ -183,26 +183,26 @@ impl INES {
         ram
     }
     
-    pub fn new(path: &str) -> CPUResult<INES> {
+    pub fn new(path: &str) -> MMUResult<INES> {
         let file = match File::open(path) {
             Ok(x) => x,
-            Err(f) => return Err(format!("{:?}", f))
+            Err(f) => return Err(EmuError::IOError(f))
         };
         let metadata = match file.metadata() {
             Ok(x) => x,
-            Err(f) => return Err(format!("{:?}", f))
+            Err(f) => return Err(EmuError::IOError(f))
         };
         if metadata.len() < MIN_INES_SIZE {
-            return Err(format!("File is smaller than minimum possible size!"))
+            return Err(EmuError::BadROM(format!("File is smaller than minimum possible size!")))
         }
         let mut filebytes = file.bytes();
         let header = match Header::new(&mut filebytes) {
             Ok(x) => x,
-            Err(f) => return Err(format!("{:?}", f))
+            Err(f) => return Err(EmuError::IOError(f))
         };
-        let prg_rom = header.fill_mem(header.prg_rom_size(), &mut filebytes)?;
+        let prg_rom = header.fill_mem(header.prg_rom_size(), &mut filebytes);
         let chr_mem = match (header.chr_rom, header.chr_ram) {
-            (x, 0) => header.fill_mem((x as usize) * 8192, &mut filebytes)?,
+            (x, 0) => header.fill_mem((x as usize) * 8192, &mut filebytes),
             (0, x) => INES::init_ram((x as usize) * 8192),
             (x, y) => panic!(format!("Both chr_rom and chr_rm {} {} should not happen!", x, y))
         };
@@ -236,15 +236,15 @@ impl INES {
         format!("\n{:02X} {:02X} {:02X} {:02X}: {}\n", status0, status1, status2, status3, msg)
     }
 
-    pub fn read(&self, idx: u16) -> CPUResult<u8> {
+    pub fn read(&self, idx: u16) -> u8 {
         match self.mapper {
             Mapper::NROM => {
                 match idx {
-                    0x0000 ... 0x5FFF => panic!(format!("Can't read {:04X}; not on cartridge", idx)),
-                    0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
-                    0x8000 ... 0xFFFF => {
-                        Ok(self.prg_rom[((idx - 0x8000) as usize) % self.prg_rom_size])
-                    },
+                    0x0000 ... 0x5FFF => panic!(format!("Can't read {:04X}; not on cartridge",
+                                                        idx)),
+                    0x6000 ... 0x7FFF => self.prg_ram[(idx - 0x6000) as usize],
+                    0x8000 ... 0xFFFF => self.prg_rom[((idx - 0x8000) as usize)
+                                                      % self.prg_rom_size],
                     _ => panic!("This should not happen with u16")
                 }
             },
@@ -253,54 +253,46 @@ impl INES {
                     0x0000 ... 0x401F => panic!(format!("Can't read {:04X}; not on cartridge", idx)),
                     0x4020 ... 0x5FFF => {
                         //FIXME
-                        Ok(self.prg_rom[(idx as usize) % self.prg_rom_size])
+                        self.prg_rom[(idx as usize) % self.prg_rom_size]
                         //panic!(format!("Can't read {:04X}; not mapped on MMC1", idx)),
                     },
-                    0x6000 ... 0x7FFF => Ok(self.prg_ram[(idx - 0x6000) as usize]),
-                    x => {
+                    0x6000 ... 0x7FFF => self.prg_ram[(idx - 0x6000) as usize],
+                    _ => {
                         let addr = sxrom.prg_read(idx) - 0x8000;
-                        Ok(self.prg_rom[addr % self.prg_rom_size])
+                        self.prg_rom[addr % self.prg_rom_size]
                     }
                 }
             },
-            x => Err(format!("{:?} not covered yet", x))
+            x => panic!(format!("{:?} not covered yet", x))
         }
     }
     
-    pub fn write(&mut self, idx: u16, val: u8) -> CPUResult<String> {
+    pub fn write(&mut self, idx: u16, val: u8) {
         match self.mapper {
             Mapper::NROM => {
                 match idx {
                     0x0000 ... 0x5FFF => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
-                    0x6000 ... 0x7FFF => {
-                        self.prg_ram[(idx - 0x6000) as usize] = val;
-                        Ok(format!("Wrote {:02X} to address {:04X}", val, idx))
-                    },
-                    0x7FFF ... 0xFFFF => Err(format!("Can't write to {:04X}!", idx)),
+                    0x6000 ... 0x7FFF => self.prg_ram[(idx - 0x6000) as usize] = val,
+                    0x7FFF ... 0xFFFF => panic!(format!("Can't write to {:04X}!", idx)),
                     _ => panic!("This should not happen with u16")
                 }
             },
             Mapper::SXROM(ref mut sxrom) => {
                 match idx {
                     0x0000 ... 0x401F => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
-                    0x4020 ... 0x5999 => {
-                        sxrom.write(idx, val)
-                        //FIXME
-                        //panic!(format!("Can't write to {:04X}; no effect on any register", idx)),
-                    },
+                    0x4020 ... 0x5999 => sxrom.write(idx, val), 
                     0x6000 ... 0x7FFF => {
+                        //FIXME
                         if true { // sxrom.prg_ram_enabled() {
                             self.prg_ram[(idx - 0x6000) as usize] = val;
-                            Ok(format!("Wrote {:02X} to address {:04X}", val, idx))
                         } else {
-                            Err(format!("Could not write {:02X} to {:04X}; no catridge RAM",
-                            val, idx))
+                            //Err(format!("Could not write {:02X} to {:04X}; no catridge RAM", val, idx))
                         }
                     },
                     x => sxrom.write(x, val),
                 }
             },
-            x => Err(format!("{:?} not covered yet", x))
+            x => panic!(format!("{:?} not covered yet", x))
         }
     }
 
