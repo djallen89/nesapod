@@ -36,7 +36,7 @@ pub enum DoubleType {
 
 const ACC: Address = Address::Acc;
 const IMP: Address = Address::Implied;
-const HLT: (Code, Address, u16) = (ILL, Address::Invalid, 0);
+const HLT: (Code, Address, isize) = (ILL, Address::Invalid, 0);
 const IXI: Address = Address::Specified(AddressType::SingleByte(SingleType::IndirectX));
 const IYI: Address = Address::Specified(AddressType::SingleByte(SingleType::IndirectY));
 const REL: Address = Address::Specified(AddressType::SingleByte(SingleType::Relative));
@@ -49,7 +49,7 @@ const ABS: Address = Address::Specified(AddressType::DoubleByte(DoubleType::Abso
 const ABX: Address = Address::Specified(AddressType::DoubleByte(DoubleType::AbsoluteX));
 const ABY: Address = Address::Specified(AddressType::DoubleByte(DoubleType::AbsoluteY));
 
-pub const OPCODE_TABLE: [(Code, Address, u16); 256] =
+pub const OPCODE_TABLE: [(Code, Address, isize); 256] =
 //              0              1               2             3              4             5              6               7             8              9              A               B              C              D              E              F
     [(BRK, IMP, 7), (ORA, IXI, 6),           HLT, (SLO, IXI, 8), (_NP, ZPG, 3), (ORA, ZPG, 3), (ASL, ZPG, 5), (SLO, ZPG, 5), (PHP, IMP, 3), (ORA, IMD, 2), (ASL, ACC, 2),           HLT, (_NP, ABS, 4), (ORA, ABS, 4), (ASL, ABS, 6), (SLO, ABS, 6), //0
      (BPL, REL, 2), (ORA, IYI, 5),           HLT, (SLO, IYI, 8), (_NP, ZPX, 4), (ORA, ZPX, 4), (ASL, ZPX, 6), (SLO, ZPX, 6), (CLC, IMP, 2), (ORA, ABY, 4), (_NP, IMP, 2), (SLO, ABY, 7), (_NP, ABX, 4), (ORA, ABX, 4), (ASL, ABX, 7), (SLO, ABX, 7), //1

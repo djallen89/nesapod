@@ -1,28 +1,8 @@
 use std::fmt;
 
 pub mod sxrom {
-    use core::cpu::CPUResult;
+    use core::ines::Mirroring;
     use std::fmt;
-
-    #[derive(Clone, Copy, Debug)]
-    pub enum Mirroring {
-        OneScreenLower,
-        OneScreenUpper,
-        Vertical,
-        Horizontal
-    }
-
-    impl Mirroring {
-        pub fn set(x: u8) -> Mirroring {
-            match x {
-                0 => Mirroring::OneScreenLower,
-                1 => Mirroring::OneScreenUpper,
-                2 => Mirroring::Vertical,
-                3 => Mirroring::Horizontal,
-                _ => panic!(format!("Invalid mirroring {}!", x))
-            }
-        }
-    }
 
     #[derive(Clone, Copy, Debug)]
     pub enum PrgBankMode {
@@ -90,6 +70,19 @@ pub mod sxrom {
                     bank + (idx as usize)
                 }
             }
+        }
+
+        pub fn nametable_mirror(&self, addr: u16) -> u16 {
+            match self.mirroring {
+                Mirroring::OneScreenLower => addr - 0x2000,
+                Mirroring::OneScreenUpper => addr - 0x2000,
+                Mirroring::Vertical       => addr % 0x800,
+                Mirroring::Horizontal     => ((addr / 2) & 0x400) + (addr % 0x400),
+            }
+        }
+
+        pub fn set_mirroring(&mut self, mirror: Mirroring) {
+            self.mirroring = mirror
         }
 
         fn chr_bank_0(&self) -> u16 {
@@ -388,7 +381,6 @@ impl Mapper {
         }
     }
 }
-
 
 impl fmt::Display for Mapper {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

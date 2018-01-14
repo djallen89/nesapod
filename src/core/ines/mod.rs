@@ -46,6 +46,27 @@ bitflags! {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum Mirroring {
+    OneScreenLower,
+    OneScreenUpper,
+    Vertical,
+    Horizontal
+}
+
+impl Mirroring {
+    pub fn set(x: u8) -> Mirroring {
+        match x {
+            0 => Mirroring::OneScreenLower,
+            1 => Mirroring::OneScreenUpper,
+            2 => Mirroring::Vertical,
+            3 => Mirroring::Horizontal,
+            _ => panic!(format!("Invalid mirroring {}!", x))
+        }
+    }
+}
+
+
 pub struct Header {
     prg_rom: u8,
     prg_ram: u8,
@@ -77,7 +98,7 @@ impl Header {
         }
         
         if magic != INES_MAGIC_CODE {
-            return Err(IOError::new(
+             return Err(IOError::new(
                 ErrorKind::Other, format!("Expected `NES' + MS-DOS EOF, got {:?}", magic)))
         }
 
@@ -149,16 +170,20 @@ impl Header {
         self.flags_10 & Flags10::BUS_CONFLICTS.bits == 1
     }
 
-    pub fn mirroring(&self) -> u8 {
+    pub fn mirroring_bits(&self) -> u8 {
         ((self.flags_6 & Flags6::MIRROR.bits) << 1) +
             ((self.flags_6 & Flags6::FOURSCREEN.bits) >> 3)
     }
 
+    pub fn mirroring(&self) -> Mirroring {
+        Mirroring::set(self.mirroring_bits())
+    }
+
     pub fn mapper(&self) -> Mapper {
-        let mirroring = self.mirroring();
-        let lower = self.flags_6 & Flags6::LOWERMAPPER.bits >> 4;
-        let upper = self.flags_7 & Flags7::UPPERMAPPER.bits;
-        let id = upper + lower;
+        let mirroring = self.mirroring_bits();
+        let lower_nybble = self.flags_6 & Flags6::LOWERMAPPER.bits >> 4;
+        let upper_nybble = self.flags_7 & Flags7::UPPERMAPPER.bits;
+        let id = upper_nybble + lower_nybble;
         Mapper::new(id, mirroring)
     }
 }
@@ -169,6 +194,7 @@ pub struct INES {
     prg_rom_size: usize,
     chr_mem_size: usize,
     mapper: Mapper,
+    mirror: Mirroring,
     prg_rom: Vec<u8>,
     prg_ram: Vec<u8>,
     chr_mem: Vec<u8>,
@@ -214,6 +240,7 @@ impl INES {
             prg_rom_size: header.prg_rom_size(),
             chr_mem_size: chr_mem.len(),
             mapper: header.mapper(),
+            mirror: header.mirroring(),
             prg_rom: prg_rom,
             prg_ram: prg_ram,
             chr_mem: chr_mem
@@ -266,7 +293,16 @@ impl INES {
             x => panic!(format!("{:?} not covered yet", x))
         }
     }
-    
+
+    pub fn nametable_mirror(&self, addr: u16) -> u16 {
+        match self.mirror {
+            Mirroring::OneScreenLower => addr - 0x2000,
+            Mirroring::OneScreenUpper => addr - 0x2000,
+            Mirroring::Vertical       => addr % 0x800,
+            Mirroring::Horizontal     => ((addr / 2) & 0x400) + (addr % 0x400),
+        }
+    }
+
     pub fn write(&mut self, idx: u16, val: u8) {
         match self.mapper {
             Mapper::NROM => {
@@ -296,22 +332,29 @@ impl INES {
         }
     }
 
-    pub fn ppu_read(&self, idx: u16, vram: &[u8; 2048]) -> u8 {
+    pub fn ppu_read(&self, idx: u16) -> u8 {
+        assert!(idx < 0x2000);
         match self.mapper {
-            Mapper::NROM => vram[(idx % 2048) as usize],
-            Mapper::SXROM(ref sxrom) => match idx {
-                0x0000 ... 0x1FFF => self.chr_mem[sxrom.chr_read(idx) as usize],
-                _ => vram[idx as usize]
-            },
+            Mapper::NROM => self.chr_mem[idx as usize],
+            Mapper::SXROM(ref sxrom) => self.chr_mem[sxrom.chr_read(idx) as usize],
             x => panic!("{:?}: PPU READ Not implemented!", x)
         }            
     }
     
-    pub fn ppu_write(&self) {
-        
+    pub fn ppu_write(&self, idx: u16, val: u8) {
+        assert!(idx < 0x2000);
+        match self.mapper {
+            Mapper::NROM => self.chr_mem[idx as usize],
+            Mapper::SXROM(ref sxrom) => self.chr_mem[sxrom.chr_read(idx) as usize],
+            x => panic!("{:?}: PPU READ Not implemented!", x)
+        };
     }
     
     pub fn mapper(&self) -> Mapper {
         self.mapper.clone()
+    }
+
+    pub fn mirroring(&self) -> Mirroring {
+        self.mirror
     }
 }

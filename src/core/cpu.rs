@@ -7,7 +7,7 @@ use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleTyp
 pub const POWERUP_S: u8 = 0xFD;
 pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
 pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
-pub const FRAME_TIMING: u16 = 29781;
+pub const FRAME_CYCLES: isize = 29781;
 pub const RESET_VECTOR: u16 = 0xFFFC;
 pub const NMI_VECTOR: u16 = 0xFFFA;
 pub const IRQ_VECTOR: u16 = 0xFFFE;
@@ -24,7 +24,6 @@ pub enum EmuError {
 }
 
 pub type CPUResult<T> = Result<T, EmuError>;
-type CPUDefault = Result<(), EmuError>;
 
 bitflags! {
     struct StatusFlags: u8 {
@@ -62,7 +61,7 @@ impl StatusFlags {
         (*self & flag).bits
     }
     
-    pub fn get_flags_status(&self, flag: StatusFlags) -> bool {
+    pub fn status(&self, flag: StatusFlags) -> bool {
         self.get_flag(flag) == flag
     }
 }
@@ -80,7 +79,7 @@ fn combine(lower: u8, upper: u8) -> u16 {
 }
 
 #[inline(always)]
-pub fn counter_inc(x: u16, y: u8) -> u16 {
+pub fn counter_inc(x: u16, y: u8) -> isize {
     //x + y > c  | x + y < c
     //c < x + y  | c > x + y
     //c - x < y  | c - x > y
@@ -143,7 +142,7 @@ impl fmt::Display for Code {
 }
 
 pub struct CPU {
-    counter: u16,
+    counter: isize,
     pc: u16,
     stack_pointer: u8,
     axy: Vec<u8>,
@@ -152,6 +151,7 @@ pub struct CPU {
     ram: [u8; 2048],
     ppu: PPU,
     nmi: bool,
+    irq: bool,
     cartridge: INES,
     last_read_bytes: String,
     last_instr: String,
@@ -181,8 +181,8 @@ impl CPU {
         self.debug = d
     }
 
-    pub fn print_screen(&self) -> &[u8; IMAGE_SIZE] {
-        self.ppu.print_screen()
+    pub fn print_screen(&self) -> &[u32; IMAGE_SIZE] {
+        self.ppu.image()
     }
     
     pub fn power_up(ines: INES, debug: bool) -> CPUResult<CPU> {
@@ -194,8 +194,9 @@ impl CPU {
             aio_registers: vec![0; 32],
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
-            ppu: PPU::init(),
+            ppu: PPU::init(ines.mirroring()),
             nmi: false,
+            irq: false,
             cartridge: ines,
             last_read_bytes: format!(""),
             last_instr: format!(""),
@@ -209,7 +210,7 @@ impl CPU {
         })
     }
 
-    pub fn reset(&mut self) -> CPUDefault {
+    pub fn reset(&mut self) {
         self.stack_pointer -= 3;
         self.pc = RESET_VECTOR;
         if self.debug {
@@ -229,20 +230,43 @@ impl CPU {
         self.cartridge.dump_ram()
     }
 
-    fn handle_nmi(&mut self) -> CPUDefault {
+    fn handle_nmi(&mut self) {
         let pc = self.pc + 1;
         self.stack_push_double(pc);
         let flags = self.status_register.bits;
         self.stack_push(flags);
+        self.status_register |= StatusFlags::I;
         self.pc = NMI_VECTOR;
-        let (brk, address, cycles) = OPCODE_TABLE[0x00];
-        self.execute(brk, address, cycles)
+        self.nmi = false;
     }
 
-    pub fn step(&mut self) -> CPUDefault {        
-        if self.nmi {
-            return self.handle_nmi()
+    fn handle_irq(&mut self) {
+        let pc = self.pc + 1;
+        self.stack_push_double(pc);
+        let flags = self.status_register.bits;
+        self.status_register |= StatusFlags::I;
+        self.stack_push(flags);
+        self.pc = IRQ_VECTOR;
+    }
+
+    fn elapsed(&self) -> isize {
+        FRAME_CYCLES - self.counter
+    }
+
+    pub fn run_frame(&mut self) {
+        self.counter += FRAME_CYCLES;
+        while self.counter > 0 {
+            if self.nmi {
+	        self.handle_nmi()
+            } else if self.irq && !self.status_register.status(StatusFlags::I) {
+                self.handle_irq()
+            }
+
+            self.step();
         }
+    }
+
+    pub fn step(&mut self) {
 
         let addr = self.pc;
         let opcode = self.read(addr);
@@ -259,11 +283,6 @@ impl CPU {
             self.last_instr = format!("{} ", code);
         }
 
-        if self.counter >= (FRAME_TIMING - 7) / 3 {            
-            self.nmi = self.ppu.render(&mut self.cartridge);
-            self.counter = 0; 
-        }
-        
         let val = self.pc;
         self.pc = val.wrapping_add(1);
         self.execute(code, address, cycles)
@@ -305,6 +324,7 @@ impl CPU {
                 self.ppu.write(address, val);
             },
             0x4014 => {
+                //read from val*0x0100 ... val*0x0100 + 255
                 let page = (val as u16) << 8;
                 for b in page .. page + 256 {
                     let val = self.read(b);
@@ -330,7 +350,7 @@ impl CPU {
     }
 
     #[inline(always)]
-    fn decode_single_byte(&mut self, s: SingleType) -> (u16, u16) {
+    fn decode_single_byte(&mut self, s: SingleType) -> (isize, u16) {
         let pc = self.pc;
         let addr = self.read(pc);
         if self.debug {
@@ -386,7 +406,7 @@ impl CPU {
     }
 
     #[inline(always)]
-    fn decode_double_byte(&mut self, d: DoubleType) -> (u16, u16) {
+    fn decode_double_byte(&mut self, d: DoubleType) -> (isize, u16) {
         let pc = self.pc;
         let addr = self.read_two_bytes(pc);
         if self.debug {
@@ -423,7 +443,7 @@ impl CPU {
     /// crossing a page and the value stored at that location (excepting immediate and
     /// relative instructions).
     #[inline(always)]
-    fn address_read(&mut self, a: Address, implied: Option<usize>) -> (u16, u16, u8) {
+    fn address_read(&mut self, a: Address, implied: Option<usize>) -> (u16, isize, u8) {
         let pc = self.pc;
         match a {
             Address::Invalid => panic!("Improper use of address_read: Invalid"),
@@ -462,7 +482,7 @@ impl CPU {
     }
     
     #[inline(always)]
-    fn address_rmw(&mut self, a: Address, min_cycles: u16, implied: Option<usize>, op: &Fn(&mut CPU, u8) -> u8) {
+    fn address_rmw(&mut self, a: Address, min_cycles: isize, implied: Option<usize>, op: &Fn(&mut CPU, u8) -> u8) {
         use core::addressing::Address::*;
         use core::addressing::AddressType::*;
         use core::addressing::SingleType::*;
@@ -505,7 +525,7 @@ impl CPU {
     }
 
     #[inline(always)]
-    fn address_write(&mut self, a: Address, min_cycles: u16, val: u8, implied: Option<usize>) {
+    fn address_write(&mut self, a: Address, min_cycles: isize, val: u8, implied: Option<usize>) {
         use core::addressing::Address::*;
         use core::addressing::AddressType::*;
         use core::addressing::SingleType::*;
@@ -538,41 +558,155 @@ impl CPU {
     }
     
     #[inline(always)]
-    fn execute(&mut self, c: Code, a: Address, min_cycles: u16) -> CPUDefault {
+    fn execute(&mut self, c: Code, a: Address, min_cycles: isize) {
         if c == Code::ILL {
-            return Err(EmuError::IllegalInstruction)
+            panic!(EmuError::IllegalInstruction)
         }
         
         match c {
+            //~12% of instructions are LDA ZPG (12%) ; (19%) ~7% from LDA {ABX,ZPX,ABS,IYI,IMD} 
             Code::LDA => self.load(a, min_cycles, A),
-            Code::LDX => self.load(a, min_cycles, X),
-            Code::LDY => self.load(a, min_cycles, Y),
-            Code::LAX => {
+            //~10% of instructions are BNE     (22%) ; (29%)
+            Code::BCC => self.branch(a, min_cycles, StatusFlags::C, false),
+            //~07% of instructions are JMP ABS (29%) ; (36.5%)
+            Code::JMP => {                                                  
+                let pc = self.pc;
+                let addr = self.read_two_bytes(pc);
+                if self.debug {
+                    self.last_read_bytes.push_str(&format!("{:02X} {:02X}",
+                                                           addr & 0xFF, addr >> 8));
+                }
+                match a {
+                    Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)) => {
+                        let low = self.read(addr);
+                        let next = if addr & 0xFF == 0xFF {
+                            addr & 0xFF00
+                        } else {
+                            addr.wrapping_add(1)
+                        };
+                        let high = self.read(next);
+                        let real_addr = combine(low, high);
+                        if self.debug {
+                            self.last_instr.push_str(&format!("(${:04X}) = {:04X}",
+                                                              addr, real_addr));
+                        }
+                        self.counter += min_cycles;
+                        self.pc = real_addr;
+                    },
+                    Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
+                        if self.debug { 
+                            self.last_instr.push_str(&format!("${:04X} ", addr));
+                        }
+                        self.counter += min_cycles;
+                        self.pc = addr;
+                    },
+                    _ => panic!(format!("JMP doesn't use {:?}", a))
+                }
+            },
+            //~07% of instructions are INX      (36.5%) ; (43.5%)
+            Code::INX => self.inc(a, min_cycles, Some(X)),
+            //4.46% of instructions are BPL     (41%) ; (48%)
+            Code::BPL => self.branch(a, min_cycles, StatusFlags::N, false),
+            //3.82% of instructions are CMP IMD (45%) ; (52%)
+            Code::CMP => self.cmp(a, min_cycles, A),
+            //3.49% of instructions are BMI     (48%) ; (55.5%)
+            Code::BMI => self.branch(a, min_cycles, StatusFlags::N, true),
+            //3.32% of instructions are BEQ     (51.5%);(59%)
+            Code::BEQ => self.branch(a, min_cycles, StatusFlags::Z, true),
+            //3.32% of instructions are BIT ZPG (55%) ; (62%)
+            Code::BIT => {
                 let (bytes, extra_cycles, val) = self.address_read(a, None);
-                if self.debug && 
-                    a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
-                {
+                if self.debug {
                     self.last_instr.push_str(&format!("= {:02X}", val));
                 }
-                
-                self.set_zn(val);
-                self.modify_pc_counter(bytes, min_cycles + extra_cycles);
-                self.axy[A] = val;
-                self.axy[X] = val;
+                let zero = self.axy[A] & val == 0;               
+                if (val & 0b1000_0000) == 0b1000_0000 {
+                    self.set_flag_op(StatusFlags::N)
+                } else {
+                    self.clear_flag_op(StatusFlags::N)
+                }
+                if (val & 0b0100_0000) == 0b0100_0000 {
+                    self.set_flag_op(StatusFlags::V)
+                } else {
+                    self.clear_flag_op(StatusFlags::V)
+                }
+                if zero {
+                    self.set_flag_op(StatusFlags::Z)
+                } else {
+                    self.clear_flag_op(StatusFlags::Z)
+                }
+                self.modify_pc_counter(bytes, min_cycles + extra_cycles)
             },
-            Code::XAA => {
-                let (bytes, extra_cycles, val) = self.address_read(a, None);
-                let result = self.axy[A] & val;
-                self.axy[A] = result;
-                self.set_zn(result);
-                self.modify_pc_counter(bytes, min_cycles + extra_cycles);
-            },
-
-
+            //2.94% of instructions are STA ZPG (58%) ; (65%) + STA ABX + STA ABS = 65 + 1.27 + 1.24
             Code::STA => {
                 let val = self.axy[A];
                 self.address_write(a, min_cycles, val, None)
             },
+            //2.00% of instructions are DEX     (60%) ; (67%)
+            Code::DEX => self.dec(a, min_cycles, Some(X)),
+            //1.98% of instructions are INY     (62%) ; (69%)
+            Code::INY => self.inc(a, min_cycles, Some(Y)),
+            //1.77% of instructions are TAY     (63.5%);(71%)
+            Code::TAY => {
+                let val = self.axy[A];
+                self.axy[Y] = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+            },
+            //1.74% of instructions are INC ZPG (65%); (72.5%)
+            Code::INC => self.inc(a, min_cycles, None),
+            //1.74% of instructions are BCS     (67%) ; (74%) ; (76.7%)
+            Code::BCS => self.branch(a, min_cycles, StatusFlags::C, true),
+            //1.41% of instructions are JSR ABS (78.18%)
+            Code::JSR => {
+                if a == Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) {
+                    let pc = self.pc;
+                    let addr = self.read_two_bytes(pc);
+                    if self.debug {
+                        self.last_read_bytes.push_str(&format!("{:02X} {:02X}",
+                                                               addr & 0xFF, addr >> 8));
+                        self.last_instr.push_str(&format!("${:04X} ", addr));
+                    }
+                    self.counter += min_cycles;
+                    self.stack_push_double(pc + 1);
+                    self.pc = addr;
+                } else {
+                    panic!(format!("JSR doesn't use {:?}", a))
+                }
+            },
+            //1.38% LSR A (79.56%)
+            Code::LSR => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
+                if cpu.debug && a == Address::Acc {
+                    cpu.last_instr.push_str("A ");
+                }
+                let (result, carry) = lsr(x);
+                cpu.set_czn(result, carry);
+                result
+            }),
+            //1.37% RTS (80.93%)
+            Code::RTS => {
+                let addr = self.stack_pop_double();
+                self.pc = addr + 1;
+                self.counter += min_cycles;
+            },
+            //1.32% AND IMD (82.25%)
+            Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }),
+            //1.08% CLC (83.33%)
+            Code::CLC => self.clear_flag(min_cycles, StatusFlags::C),
+            
+            Code::EOR => self.bitwise(a, min_cycles, &|acc, x| { acc ^ x }),
+            Code::ORA => self.bitwise(a, min_cycles, &|acc, x| { acc | x }),
+
+            Code::CPX => self.cmp(a, min_cycles, X),
+            Code::CPY => self.cmp(a, min_cycles, Y),
+
+            Code::BNE => self.branch(a, min_cycles, StatusFlags::Z, false),
+            Code::BVC => self.branch(a, min_cycles, StatusFlags::V, false),
+            Code::BVS => self.branch(a, min_cycles, StatusFlags::V, true),
+            
+            Code::LDX => self.load(a, min_cycles, X),
+            Code::LDY => self.load(a, min_cycles, Y),
+
             Code::STX => {
                 let val = self.axy[X];
                 self.address_write(a, min_cycles, val, None)
@@ -581,63 +715,17 @@ impl CPU {
                 let val = self.axy[Y];
                 self.address_write(a, min_cycles, val, None)
             },
-            Code::ASX => {
-                let val = self.axy[A] & self.axy[X];
-                self.address_write(a, min_cycles, val, None)
-            },
-            Code::SAX => {
-                let (bytes, _, rhs) = self.address_read(a, None);
-                let lhs = self.axy[A] & self.axy[X];
-                let carry = lhs >= rhs;
-                let result = lhs.wrapping_sub(rhs);
-                self.set_czn(result, carry);
-                self.axy[X] = result;
-                self.modify_pc_counter(bytes, min_cycles);
-            },
-            
 
             Code::ADC => self.add(a, min_cycles),
-            Code::SBC | Code::_SB => self.sub(a, min_cycles),
-            
-
-            Code::INC => self.inc(a, min_cycles, None),
-            Code::INX => self.inc(a, min_cycles, Some(X)),
-            Code::INY => self.inc(a, min_cycles, Some(Y)),
-            Code::INS => self.address_rmw(a, min_cycles, None, &|cpu, val| {
-                let result = val.wrapping_add(1);
-                let (final_result, next_carry, overflow) = cpu.adc(!result);
-                cpu.set_cznv(final_result, next_carry, overflow);
-                cpu.axy[A] = final_result;
-                result //Set M to the result of the INC
-            }),
-            
-
+            Code::SBC => self.sub(a, min_cycles),
             Code::DEC => self.dec(a, min_cycles, None),
-            Code::DEX => self.dec(a, min_cycles, Some(X)),
             Code::DEY => self.dec(a, min_cycles, Some(Y)),
-            Code::DCM => self.address_rmw(a, min_cycles, None, &|cpu, val| {
-                let result = val.wrapping_sub(1);
-                let lhs = cpu.axy[A];
-                let final_result = lhs.wrapping_sub(result);
-                let carry = lhs >= result;
-                cpu.set_czn(final_result, carry);
-                result
-            }),
-            
 
             Code::ASL => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
                 if cpu.debug && a == Address::Acc {
                     cpu.last_instr.push_str("A ");
                 }
                 let (result, carry) = asl(x);
-                cpu.set_czn(result, carry);
-                result
-            }),
-            Code::LSR => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
-                }
-                let (result, carry) = lsr(x);
                 cpu.set_czn(result, carry);
                 result
             }),
@@ -658,6 +746,170 @@ impl CPU {
                 cpu.set_czn(result, next_carry);
                 result
             }),
+
+            Code::TAX => {
+                let val = self.axy[A];
+                self.axy[X] = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+            },
+            Code::TXA => {
+                let val = self.axy[X];
+                self.axy[A] = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+            },
+            Code::TYA => {
+                let val = self.axy[Y];
+                self.axy[A] = val;
+                self.set_zn(val);
+                self.counter += min_cycles;
+            },
+            Code::TSX => {
+                self.axy[X] = self.stack_pointer;
+                let val = self.axy[X];
+                self.set_zn(val);
+            },
+            Code::TXS => {
+                let val = self.axy[X];
+                self.stack_pointer = val;
+                self.counter += min_cycles;
+            },
+            
+
+            Code::PHA => {
+                self.counter += min_cycles;
+                let val = self.axy[A];
+                self.stack_push(val);
+            },
+            Code::PLA => {
+                self.counter += min_cycles;
+                let acc = self.stack_pop();
+                self.set_zn(acc);
+                self.axy[A] = acc;
+            },
+            Code::PHP => {
+                self.counter += min_cycles;
+                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                self.stack_push(flags.bits);
+            },
+
+            Code::PLP => {
+                self.counter += min_cycles;
+                let flags = self.stack_pop() & 0b1110_1111;
+                self.status_register.bits = flags | 0b0010_0000;
+            },
+            
+            Code::RTI => {
+                let flags = self.stack_pop() & 0b1110_1111;
+                self.status_register.bits = flags | 0b0010_0000;
+                let addr = self.stack_pop_double();
+                self.pc = addr;
+                self.counter += min_cycles;
+            },
+
+            
+            Code::SEC => self.set_flag(min_cycles, StatusFlags::C),
+            Code::SED => self.set_flag(min_cycles, StatusFlags::D),
+            Code::SEI => self.set_flag(min_cycles, StatusFlags::I),
+
+          
+            Code::CLD => self.clear_flag(min_cycles, StatusFlags::D),
+            Code::CLI => self.clear_flag(min_cycles, StatusFlags::I),
+            Code::CLV => self.clear_flag(min_cycles, StatusFlags::V),
+
+            Code::BRK => {
+                self.counter += min_cycles;
+                let addr = self.pc + 1;
+                self.stack_push_double(addr);
+                
+                let irq = self.read_two_bytes(IRQ_VECTOR);
+                self.pc = irq;
+                    
+                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
+                self.stack_push(flags.bits)
+            },
+
+            Code::NOP | Code::_NP  => { 
+                if a != Address::Implied {
+                    let (bytes, extra_cycle, val) = self.address_read(a, None);
+
+                    if self.debug &&
+                        a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
+                    {
+                        self.last_instr.push_str(&format!("= {:02X}", val));
+                    }
+                    
+                    self.modify_pc_counter(bytes, min_cycles + extra_cycle);
+                } else {
+                    self.modify_pc_counter(0, min_cycles);
+                }
+            },
+
+            Code::LAX => {
+                let (bytes, extra_cycles, val) = self.address_read(a, None);
+                if self.debug && 
+                    a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
+                {
+                    self.last_instr.push_str(&format!("= {:02X}", val));
+                }
+                
+                self.set_zn(val);
+                self.modify_pc_counter(bytes, min_cycles + extra_cycles);
+                self.axy[A] = val;
+                self.axy[X] = val;
+            },
+
+
+            Code::OAL => {
+                self.bitwise(a, min_cycles, &|acc, x| { (acc | 0xEE) & x });
+                let a = self.axy[A];
+                self.axy[X] = a;
+            },                        
+
+
+            Code::XAA => {
+                let (bytes, extra_cycles, val) = self.address_read(a, None);
+                let result = self.axy[A] & val;
+                self.axy[A] = result;
+                self.set_zn(result);
+                self.modify_pc_counter(bytes, min_cycles + extra_cycles);
+            },
+
+
+            Code::ASX => {
+                let val = self.axy[A] & self.axy[X];
+                self.address_write(a, min_cycles, val, None)
+            },
+            Code::SAX => {
+                let (bytes, _, rhs) = self.address_read(a, None);
+                let lhs = self.axy[A] & self.axy[X];
+                let carry = lhs >= rhs;
+                let result = lhs.wrapping_sub(rhs);
+                self.set_czn(result, carry);
+                self.axy[X] = result;
+                self.modify_pc_counter(bytes, min_cycles);
+            },
+            
+            Code::_SB => self.sub(a, min_cycles),
+            
+
+            Code::INS => self.address_rmw(a, min_cycles, None, &|cpu, val| {
+                let result = val.wrapping_add(1);
+                let (final_result, next_carry, overflow) = cpu.adc(!result);
+                cpu.set_cznv(final_result, next_carry, overflow);
+                cpu.axy[A] = final_result;
+                result //Set M to the result of the INC
+            }),
+            
+            Code::DCM => self.address_rmw(a, min_cycles, None, &|cpu, val| {
+                let result = val.wrapping_sub(1);
+                let lhs = cpu.axy[A];
+                let final_result = lhs.wrapping_sub(result);
+                let carry = lhs >= result;
+                cpu.set_czn(final_result, carry);
+                result
+            }),            
 
 
             Code::SLO => self.address_rmw(a, min_cycles, Some(A), &|cpu, val| {
@@ -741,225 +993,9 @@ impl CPU {
                 let val = self.axy[X] & self.axy[A] & upper;
                 self.address_write(a, min_cycles, val, None)
             },
-
-
-            Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }),
-            Code::EOR => self.bitwise(a, min_cycles, &|acc, x| { acc ^ x }),
-            Code::ORA => self.bitwise(a, min_cycles, &|acc, x| { acc | x }),
-            Code::OAL => {
-                self.bitwise(a, min_cycles, &|acc, x| { (acc | 0xEE) & x });
-                let a = self.axy[A];
-                self.axy[X] = a;
-            },
             
-
-            Code::CMP => self.cmp(a, min_cycles, A),
-            Code::CPX => self.cmp(a, min_cycles, X),
-            Code::CPY => self.cmp(a, min_cycles, Y),
-            
-
-            Code::BIT => {
-                let (bytes, extra_cycles, val) = self.address_read(a, None);
-                if self.debug {
-                    self.last_instr.push_str(&format!("= {:02X}", val));
-                }
-                let zero = self.axy[A] & val == 0;
-                let n = (val & 0b1000_0000) == 0b1000_0000;
-                let v = (val & 0b0100_0000) == 0b0100_0000;
-                if n {
-                    self.set_flag_op(StatusFlags::N)
-                } else {
-                    self.clear_flag_op(StatusFlags::N)
-                }
-                if v {
-                    self.set_flag_op(StatusFlags::V)
-                } else {
-                    self.clear_flag_op(StatusFlags::V)
-                }
-                if zero {
-                    self.set_flag_op(StatusFlags::Z)
-                } else {
-                    self.clear_flag_op(StatusFlags::Z)
-                }
-                self.modify_pc_counter(bytes, min_cycles + extra_cycles)
-            },
-            
-
-            Code::BCC => self.branch(a, min_cycles, StatusFlags::C, false),
-            Code::BCS => self.branch(a, min_cycles, StatusFlags::C, true),
-            Code::BEQ => self.branch(a, min_cycles, StatusFlags::Z, true),
-            Code::BNE => self.branch(a, min_cycles, StatusFlags::Z, false),
-            Code::BMI => self.branch(a, min_cycles, StatusFlags::N, true),
-            Code::BPL => self.branch(a, min_cycles, StatusFlags::N, false),
-            Code::BVC => self.branch(a, min_cycles, StatusFlags::V, false),
-            Code::BVS => self.branch(a, min_cycles, StatusFlags::V, true),
-            
-
-            Code::TAX => {
-                let val = self.axy[A];
-                self.axy[X] = val;
-                self.set_zn(val);
-                self.counter += min_cycles;
-            },
-            Code::TXA => {
-                let val = self.axy[X];
-                self.axy[A] = val;
-                self.set_zn(val);
-                self.counter += min_cycles;
-            },
-            Code::TAY => {
-                let val = self.axy[A];
-                self.axy[Y] = val;
-                self.set_zn(val);
-                self.counter += min_cycles;
-            },
-            Code::TYA => {
-                let val = self.axy[Y];
-                self.axy[A] = val;
-                self.set_zn(val);
-                self.counter += min_cycles;
-            },
-            Code::TSX => {
-                self.axy[X] = self.stack_pointer;
-                let val = self.axy[X];
-                self.set_zn(val);
-            },
-            Code::TXS => {
-                let val = self.axy[X];
-                self.stack_pointer = val;
-                self.counter += min_cycles;
-            },
-            
-
-            Code::PHA => {
-                self.counter += min_cycles;
-                let val = self.axy[A];
-                self.stack_push(val);
-            },
-            Code::PLA => {
-                self.counter += min_cycles;
-                let acc = self.stack_pop();
-                self.set_zn(acc);
-                self.axy[A] = acc;
-            },
-            Code::PHP => {
-                self.counter += min_cycles;
-                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                self.stack_push(flags.bits);
-            },
-            Code::PLP => {
-                self.counter += min_cycles;
-                let flags = self.stack_pop() & 0b1110_1111;
-                self.status_register.bits = flags | 0b0010_0000;
-            },
-            
-            Code::JMP => {
-                let pc = self.pc;
-                let addr = self.read_two_bytes(pc);
-                if self.debug {
-                    self.last_read_bytes.push_str(&format!("{:02X} {:02X}",
-                                                           addr & 0xFF, addr >> 8));
-                }
-                match a {
-                    Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)) => {
-                        let low = self.read(addr);
-                        let next = if addr & 0xFF == 0xFF {
-                            addr & 0xFF00
-                        } else {
-                            addr.wrapping_add(1)
-                        };
-                        let high = self.read(next);
-                        let real_addr = combine(low, high);
-                        if self.debug {
-                            self.last_instr.push_str(&format!("(${:04X}) = {:04X}",
-                                                              addr, real_addr));
-                        }
-                        self.counter += min_cycles;
-                        self.pc = real_addr;
-                    },
-                    Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
-                        if self.debug { 
-                            self.last_instr.push_str(&format!("${:04X} ", addr));
-                        }
-                        self.counter += min_cycles;
-                        self.pc = addr;
-                    },
-                    _ => panic!(format!("JMP doesn't use {:?}", a))
-                }
-            },
-            Code::JSR => {
-                match a {
-                    Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
-                        let pc = self.pc;
-                        let addr = self.read_two_bytes(pc);
-                        if self.debug {
-                            self.last_read_bytes.push_str(&format!("{:02X} {:02X}",
-                                                                   addr & 0xFF, addr >> 8));
-                            self.last_instr.push_str(&format!("${:04X} ", addr));
-                        }
-                        self.counter += min_cycles;
-                        self.stack_push_double(pc + 1);
-                        self.pc = addr;
-                    },
-                    _ => panic!(format!("JSR doesn't use {:?}", a))
-                }
-            },
-            Code::RTS => {
-                let addr = self.stack_pop_double();
-                self.pc = addr + 1;
-                self.counter += min_cycles;
-            },
-            Code::RTI => {
-                let flags = self.stack_pop() & 0b1110_1111;
-                self.status_register.bits = flags | 0b0010_0000;
-                let addr = self.stack_pop_double();
-                self.pc = addr;
-                self.counter += min_cycles;
-            },
-
-            
-            Code::SEC => self.set_flag(min_cycles, StatusFlags::C),
-            Code::SED => self.set_flag(min_cycles, StatusFlags::D),
-            Code::SEI => self.set_flag(min_cycles, StatusFlags::I),
-
-            
-            Code::CLC => self.clear_flag(min_cycles, StatusFlags::C),
-            Code::CLD => self.clear_flag(min_cycles, StatusFlags::D),
-            Code::CLI => self.clear_flag(min_cycles, StatusFlags::I),
-            Code::CLV => self.clear_flag(min_cycles, StatusFlags::V),
-
-            
-            Code::NOP | Code::_NP  => { 
-                if a != Address::Implied {
-                    let (bytes, extra_cycle, val) = self.address_read(a, None);
-
-                    if self.debug &&
-                        a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
-                    {
-                        self.last_instr.push_str(&format!("= {:02X}", val));
-                    }
-                    
-                    self.modify_pc_counter(bytes, min_cycles + extra_cycle);
-                } else {
-                    self.modify_pc_counter(0, min_cycles);
-                }
-            },
-            
-            Code::BRK => {
-                self.counter += min_cycles;
-                let addr = self.pc + 1;
-                self.stack_push_double(addr);
-                
-                let irq = self.read_two_bytes(IRQ_VECTOR);
-                self.pc = irq;
-                    
-                let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                self.stack_push(flags.bits)
-            },
-
             Code::ILL => panic!(format!("{:?}", EmuError::IllegalInstruction))
         }
-        Ok(())
     }
 
     fn set_zn(&mut self, val: u8) {
@@ -1021,7 +1057,7 @@ impl CPU {
         val
     }
 
-    fn load(&mut self, a: Address, min_cycles: u16, r: usize) {
+    fn load(&mut self, a: Address, min_cycles: isize, r: usize) {
         let (bytes, extra_cycles, val) = self.address_read(a, None);
         if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
             self.last_instr.push_str(&format!("= {:02X}", val));
@@ -1031,7 +1067,7 @@ impl CPU {
         self.axy[r] = val;
     }
 
-    fn inc(&mut self, a: Address, min_cycles: u16, implied: Option<usize>) {
+    fn inc(&mut self, a: Address, min_cycles: isize, implied: Option<usize>) {
         self.address_rmw(a, min_cycles, implied, &|cpu, x| {
             let result = x.wrapping_add(1);
             cpu.set_zn(result);
@@ -1039,7 +1075,7 @@ impl CPU {
         })
     }
 
-    fn dec(&mut self, a: Address, min_cycles: u16, implied: Option<usize>) {
+    fn dec(&mut self, a: Address, min_cycles: isize, implied: Option<usize>) {
        self.address_rmw(a, min_cycles, implied, &|cpu, x| {
            let result = x.wrapping_sub(1);
            cpu.set_zn(result);
@@ -1061,7 +1097,7 @@ impl CPU {
         (result, next_carry, overflow)
     }
 
-    fn add(&mut self, a: Address, min_cycles: u16) {
+    fn add(&mut self, a: Address, min_cycles: isize) {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None);
         
         if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
@@ -1077,7 +1113,7 @@ impl CPU {
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
     }
 
-    fn sub(&mut self, a: Address, min_cycles: u16) {
+    fn sub(&mut self, a: Address, min_cycles: isize) {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None);
         if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
             self.last_instr.push_str(&format!("= {:02X}", rhs));
@@ -1096,21 +1132,21 @@ impl CPU {
         self.status_register &= !flag;
     }
 
-    fn set_flag(&mut self, min_cycles: u16, flag: StatusFlags) {
+    fn set_flag(&mut self, min_cycles: isize, flag: StatusFlags) {
         self.counter += min_cycles;
         self.set_flag_op(flag);
     }
 
-    fn clear_flag(&mut self, min_cycles: u16, flag: StatusFlags) {
+    fn clear_flag(&mut self, min_cycles: isize, flag: StatusFlags) {
         self.counter += min_cycles;
         self.clear_flag_op(flag);
     }
 
-    fn branch(&mut self, a: Address, min_cycles: u16, flag: StatusFlags, on: bool) {
+    fn branch(&mut self, a: Address, min_cycles: isize, flag: StatusFlags, on: bool) {
         let cond = if on {
-            self.status_register.get_flags_status(flag)
+            self.status_register.status(flag)
         } else {
-            !self.status_register.get_flags_status(flag)
+            !self.status_register.status(flag)
         };
         
         let (bytes, _, val) = self.address_read(a, None);
@@ -1148,7 +1184,7 @@ impl CPU {
         }
     }
 
-    fn cmp(&mut self, a: Address, min_cycles: u16, lhs_idx: usize) {
+    fn cmp(&mut self, a: Address, min_cycles: isize, lhs_idx: usize) {
         let lhs = self.axy[lhs_idx];
         let (bytes, extra_cycles, val) = self.address_read(a, None);
         if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
@@ -1166,7 +1202,7 @@ impl CPU {
         self.set_zn(res);
     }
 
-    fn bitwise(&mut self, a: Address, min_cycles: u16, op: &Fn(u8, u8) -> u8) {
+    fn bitwise(&mut self, a: Address, min_cycles: isize, op: &Fn(u8, u8) -> u8) {
         let (bytes, extra_cycles, val) = self.address_read(a, None);
         if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
             self.last_instr.push_str(&format!("= {:02X}", val));
@@ -1175,7 +1211,7 @@ impl CPU {
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
     }
 
-    fn modify_pc_counter(&mut self, bytes: u16, cycles: u16) {
+    fn modify_pc_counter(&mut self, bytes: u16, cycles: isize) {
         self.pc += bytes;
         self.counter += cycles;
     }

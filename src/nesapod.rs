@@ -7,8 +7,8 @@ use core::cpu::CPU;
 use core::ines::INES;
 use glium::glutin::VirtualKeyCode as VKC;
 
-const WIDTH: u32 = 900;
-const HEIGHT: u32 = 700;
+const WIDTH: u32 = 256*4;
+const HEIGHT: u32 = 240*4;
 
 struct Fonts {
     regular: conrod::text::font::Id,
@@ -33,11 +33,7 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
         Ok(emu) => emu,
         Err(f) => panic!(f)
     };
-
-    match emulator.reset() {
-        Ok(_) => {},
-        Err(_) => {},
-    }
+    emulator.reset();
     debugger.input(&format!("{}\n", emulator));
 
     let mut events_loop = glium::glutin::EventsLoop::new();
@@ -101,6 +97,7 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
                         },
                         ..
                     } => {
+
                         let mut steps = match k {
                             VKC::Key1 => 1,
                             VKC::F => 1 << 4,
@@ -112,14 +109,8 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
                             _ => 0
                         };
                         while steps > 0 {
-                            match emulator.step() {
-                                Ok(_) => debugger.input(&format!("{}\n", emulator)),
-                                Err(f) => {
-                                    debugger.input(&format!("{}\n", emulator));
-                                    debugger.input(&format!("{:?}\n", f));
-                                    break;
-                                }
-                            }
+                            emulator.run_frame();
+                            debugger.input(&format!("{}\n", emulator));
                             steps -= 1;
                         }
                         if dump {
