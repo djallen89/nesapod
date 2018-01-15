@@ -1,23 +1,10 @@
 use core::ines::INES;
 use core::ines::Mirroring;
 
-pub const SCANLINES: usize = 262;
 pub const VISIBLE_SCANLINES: usize = 240;
 pub const SCANLINE_LENGTH: usize = 256;
-pub const SCANLINE_CYCLES: usize = 341;
 pub const IMAGE_SIZE: usize = VISIBLE_SCANLINES * SCANLINE_LENGTH;
-//
-/*
-pub const NTSC_PALETTE: [(u8, u8, u8); 56] = [
-    (084,  84,  84), (000,  30, 116), (008,  16, 144), (048,   0, 136), (068,   0, 100), (092,   0,  48), (084,   4,   0), (060,  24,   0),
-    (032,  42,   0), (008,  58,   0), (000,  64,   0), (000,  60,   0), (000,  50,  60), (000,   0,   0), (152, 150, 152), (008,  76, 196),
-    (048,  50, 236), (092,  30, 228), (136,  20, 176), (160,  20, 100), (152,  34,  32), (120,  60,   0), (084,  90,   0), (040, 114,   0),
-    (008, 124,   0), (000, 118,  40), (000, 102, 120), (000,   0,   0), (236, 238, 236), (076, 154, 236), (120, 124, 236), (176,  98, 236),
-    (228,  84, 236), (236,  88, 180), (236, 106, 100), (212, 136,  32), (160, 170,   0), (116, 196,   0), (076, 208,  32), (056, 204, 108),
-    (056, 180, 204), (060,  60,  60), (236, 238, 236), (168, 204, 236), (188, 188, 236), (212, 178, 236), (236, 174, 236), (236, 174, 212),
-    (236, 180, 176), (228, 196, 144), (204, 210, 120), (180, 222, 120), (168, 226, 144), (152, 226, 180), (160, 214, 228), (160, 162, 160)
-];
- */
+
 pub const NES_RGB: [u32; 64] = [
     0x7C7C7C, 0x0000FC, 0x0000BC, 0x4428BC, 0x940084, 0xA80020, 0xA81000, 0x881400,
     0x503000, 0x007800, 0x006800, 0x005800, 0x004058, 0x000000, 0x000000, 0x000000,
@@ -27,8 +14,19 @@ pub const NES_RGB: [u32; 64] = [
     0xF8B800, 0xB8F818, 0x58D854, 0x58F898, 0x00E8D8, 0x787878, 0x000000, 0x000000,
     0xFCFCFC, 0xA4E4FC, 0xB8B8F8, 0xD8B8F8, 0xF8B8F8, 0xF8A4C0, 0xF0D0B0, 0xFCE0A8,
     0xF8D878, 0xD8F878, 0xB8F8B8, 0xB8F8D8, 0x00FCFC, 0xF8D8F8, 0x000000, 0x000000
-    ];
-
+];
+/*
+pub const NES_RGB: [(u8, u8, u8); 64] = [
+    (0x7C, 0x7C, 0x7C), (0x00, 0x00, 0xFC), (0x00, 0x00, 0xBC), (0x44, 0x28, 0xBC), (0x94, 0x00, 0x84), (0xA8, 0x00, 0x20), (0xA8, 0x10, 0x00), (0x88, 0x14, 0x00),
+    (0x50, 0x30, 0x00), (0x00, 0x78, 0x00), (0x00, 0x68, 0x00), (0x00, 0x58, 0x00), (0x00, 0x40, 0x58), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+    (0xBC, 0xBC, 0xBC), (0x00, 0x78, 0xF8), (0x00, 0x58, 0xF8), (0x68, 0x44, 0xFC), (0xD8, 0x00, 0xCC), (0xE4, 0x00, 0x58), (0xF8, 0x38, 0x00), (0xE4, 0x5C, 0x10),
+    (0xAC, 0x7C, 0x00), (0x00, 0xB8, 0x00), (0x00, 0xA8, 0x00), (0x00, 0xA8, 0x44), (0x00, 0x88, 0x88), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+    (0xF8, 0xF8, 0xF8), (0x3C, 0xBC, 0xFC), (0x68, 0x88, 0xFC), (0x98, 0x78, 0xF8), (0xF8, 0x78, 0xF8), (0xF8, 0x58, 0x98), (0xF8, 0x78, 0x58), (0xFC, 0xA0, 0x44),
+    (0xF8, 0xB8, 0x00), (0xB8, 0xF8, 0x18), (0x58, 0xD8, 0x54), (0x58, 0xF8, 0x98), (0x00, 0xE8, 0xD8), (0x78, 0x78, 0x78), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
+    (0xFC, 0xFC, 0xFC), (0xA4, 0xE4, 0xFC), (0xB8, 0xB8, 0xF8), (0xD8, 0xB8, 0xF8), (0xF8, 0xB8, 0xF8), (0xF8, 0xA4, 0xC0), (0xF0, 0xD0, 0xB0), (0xFC, 0xE0, 0xA8),
+    (0xF8, 0xD8, 0x78), (0xD8, 0xF8, 0x78), (0xB8, 0xF8, 0xB8), (0xB8, 0xF8, 0xD8), (0x00, 0xFC, 0xFC), (0xF8, 0xD8, 0xF8), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00)
+];
+*/
 bitflags! {
     pub struct PPUCTRL: u8 {
         const INIT = 0;
@@ -99,13 +97,6 @@ pub enum Scanline {
     PRE
 }
 
-/*
-#[derive(Debug, Copy, Clone)]
-pub enum Mirroring {
-    VERTICAL,
-    HORIZONTAL
-}*/
-
 #[derive(Debug, Copy, Clone)]
 pub struct Sprite {
     pub id: u8,
@@ -156,11 +147,10 @@ impl Addr {
 
     pub fn set_coarse_x(&mut self, val: u8) {
         self.val &= !0b1_1111;
-        self.val |= val as u16;
+        self.val |= (val & 0b0001_1111) as u16;
     }
 
     pub fn incr_coarse_x(&mut self) {
-        //FIXME: rollover into next bit?
         let res = ((self.val & 0b1_1111) + 1) & 0b1_1111;
         self.val &= !0b1_1111;
         self.val |= res;
@@ -172,11 +162,10 @@ impl Addr {
 
     pub fn set_coarse_y(&mut self, val: u8) {
         self.val &= !0b0000_0011_1110_000;
-        self.val |= (val as u16) << 5;
+        self.val |= ((val & 0b0001_1111) as u16) << 5;
     }
 
     pub fn incr_coarse_y(&mut self) {
-        //FIXME: rollover into next bit?
         let res = ((self.val & 0b0000_0011_1110_0000) + 1) & 0b0000_0011_1110_0000;
         self.val &= !0b0000_0011_1110_0000;
         self.val |= res;
@@ -192,7 +181,7 @@ impl Addr {
 
     pub fn set_nametable(&mut self, nt: u8) {
         self.val &= !0b0000_1100_0000_0000;
-        self.val |= (nt as u16) << 10;
+        self.val |= ((nt & 0b0000_0011) as u16) << 10;
     }
 
     pub fn xor_nametable(&mut self, val: u16) {
@@ -253,7 +242,6 @@ pub struct PPU {
 
     ppu_scroll: u8,
     ppu_addr: u8,
-    ppu_data: u8,
 
     oam_addr: u8,
     oam_data: u8,
@@ -309,7 +297,6 @@ impl PPU {
 
             ppu_scroll: 0x00,
             ppu_addr: 0x00,
-            ppu_data: 0x00,
 
             oam_addr: 0x00,
             oam_data: 0x00,
@@ -355,49 +342,53 @@ impl PPU {
         }
     }
 
-    fn palette_ram_addr(&self, addr: u16) -> u16 {
-        if (addr & 0x13) == 0x10 {
-            addr & !0x10
-        } else {
-            addr
-        }
+    pub fn signal_new_frame(&self) -> bool {
+        self.signal_new_frame
     }
 
-    fn nametable_mirror(&self, addr: u16) -> u16 {
-        match self.mirroring {
-            Mirroring::OneScreenLower => addr - 0x2000,
-            Mirroring::OneScreenUpper => addr - 0x2000,
-            Mirroring::Vertical       => addr % 0x800,
-            Mirroring::Horizontal     => ((addr / 2) & 0x400) + (addr % 0x400),
-        }
+    pub fn signal_nmi(&self) -> bool {
+        self.signal_cpu_nmi
     }
 
-    fn internal_read(&self, addr: &mut u16, cart: &INES) -> u8 {
+    pub fn clear_nmi_signal(&mut self) {
+        self.signal_cpu_nmi = false;
+    }
+
+    pub fn clear_frame_signal(&mut self) {
+        self.signal_new_frame = false;
+    }
+
+    #[inline(always)]
+    fn palette_ram_addr(&self, addr: &mut u16) {
+        if (*addr & 0x13) == 0x10 {
+            *addr &= !0x10;
+        } 
+    }
+
+    fn internal_read(&self, addr: &mut u16, cart: &mut INES) -> u8 {
         match *addr {
             0x0000 ... 0x1FFF => cart.ppu_read(*addr),
-            0x2000 ... 0x3EFF => self.ci_ram[cart.nametable_mirror(*addr) as usize],
+            0x2000 ... 0x3EFF => self.ci_ram[cart.nametable_mirror(*addr)  as usize],
             0x3F00 ... 0x3FFF => {
-                let real_addr = self.palette_ram_addr(*addr);
-                *addr = real_addr;
-                let rhs = if self.ppu_mask.is_gray() {
+                self.palette_ram_addr(addr);
+                let rhs = if !self.ppu_mask.is_gray() {
                     0x30
                 } else {
                     0xFF
                 };
-                self.cg_ram[(real_addr & 0x1F) as usize] & rhs
+                self.cg_ram[(*addr & 0x1F) as usize] & rhs
             },
             _ => 0
         }
     }
 
-    fn internal_write(&mut self, addr: &mut u16, val: u8, cart: &INES) {
+    fn internal_write(&mut self, addr: &mut u16, val: u8, cart: &mut INES) {
         match *addr {
             0x0000 ... 0x1FFF => cart.ppu_write(*addr, val),
             0x2000 ... 0x3EFF => self.ci_ram[cart.nametable_mirror(*addr) as usize] = val,
             0x3F00 ... 0x3FFF => {
-                let real_addr = self.palette_ram_addr(*addr);
-                *addr = real_addr;
-                self.cg_ram[(real_addr & 0x1F) as usize] = val;
+                self.palette_ram_addr(addr);
+                self.cg_ram[(*addr & 0x1F) as usize] = val;
             },
             _ => {},
         }
@@ -410,16 +401,12 @@ impl PPU {
         self.ppu_ctrl.bits = 0;
         self.ppu_mask.bits = 0;
         self.ppu_status.bits = 0;
-        self.image = [0x00; IMAGE_SIZE];
+        self.image = [0; IMAGE_SIZE];
         self.ci_ram = [0xFF; 2048];
         self.oam_ram = [0x00; 256];
     }
 
-    pub fn is_vblank(&self) -> bool {
-        self.ppu_status & PPUSTATUS::VBLANK == PPUSTATUS::VBLANK
-    }
-
-    pub fn read(&mut self, address: u16) -> u8 {
+    pub fn read(&mut self, address: u16, cart: &mut INES) -> u8 {
         match address % 8 {
             2 => {
                 let val = self.ppu_status.bits | (self.gen_result & 0x1F);
@@ -435,10 +422,13 @@ impl PPU {
                 if self.vram_addr.addr() <= 0x3EFF {
                     let buf = self.gen_buffer;
                     self.gen_result = buf;
-                    let new_buf = self.ci_ram[self.nametable_mirror(self.vram_addr.get()) as usize];
+                    let mut addr = address;
+                    let new_buf = self.internal_read(&mut addr, cart);
                     self.gen_buffer = new_buf;
                 } else {
-                    let res = self.ci_ram[self.nametable_mirror(self.vram_addr.get()) as usize];
+                    let mut addr = address;
+                    let res = self.internal_read(&mut addr, cart);
+                    self.vram_addr.val = addr;
                     self.gen_result = res;
                     self.gen_buffer = res;
                 }
@@ -450,7 +440,7 @@ impl PPU {
         self.gen_result
     }
 
-    pub fn write(&mut self, address: u16, val: u8) {
+    pub fn write(&mut self, address: u16, val: u8, cart: &mut INES) {
         self.gen_result = val;
         match address % 8 {
             0 => {
@@ -461,8 +451,9 @@ impl PPU {
             1 => self.ppu_mask.bits = val,
             3 => self.oam_addr = val,
             4 => {
-                self.oam_addr = self.oam_addr.wrapping_add(1);
-                self.oam_data = val;
+                self.oam_addr += 1;
+                self.oam_ram[self.oam_addr as usize];
+                //self.oam_data = val;
             },
             5 => {
                 let not_latch = !self.gen_latch;
@@ -487,7 +478,9 @@ impl PPU {
                 self.gen_latch = not_latch;
             },
             7 => {
-                self.ci_ram[self.nametable_mirror(self.vram_addr.get()) as usize] = val;
+                let mut addr = self.vram_addr.val;
+                self.internal_write(&mut addr, val, cart);
+                self.vram_addr.val = addr;
                 self.vram_increment();
             }
             _ => {},
@@ -505,9 +498,9 @@ impl PPU {
 
     fn vram_increment(&mut self) {
         let increment = if (self.ppu_ctrl & PPUCTRL::INCR) == PPUCTRL::INCR {
-            1
-        } else {
             32
+        } else {
+            1
         };
         self.vram_addr.val += increment;
         if self.vram_addr.val >= 2047 {
@@ -604,7 +597,7 @@ impl PPU {
 
     fn eval_sprites(&mut self) {
         let mut n = 0;
-        for m in 0 .. 64 {
+        'outer: for m in 0 .. 64 {
             let line = if self.scanline == 261 {
                 -1 - ((self.oam_ram[m * 4] as usize) as isize)
             } else {
@@ -616,18 +609,20 @@ impl PPU {
                 let tile = self.oam_ram[m * 4 + 1];
                 let attr = self.oam_ram[m * 4 + 2];
                 let x = self.oam_ram[m * 4 + 3];
-                self.secondary_oam[n].set(m, y, tile, attr, x);
+                if n < 8 {
+                    self.secondary_oam[n].set(m, y, tile, attr, x);
+                }
 
                 n += 1;
                 if n > 8 {
                     self.ppu_status |= PPUSTATUS::SPRITE_OVERFLOW;
-                    break
+                    break 'outer
                 }
             }
         }
     }
 
-    fn load_sprites(&mut self, cart: &INES) {
+    fn load_sprites(&mut self, cart: &mut INES) {
         let mut addr;
         for i in 0 .. 8 {
             let sp_i = self.secondary_oam[i].clone();
@@ -642,9 +637,9 @@ impl PPU {
                     (self.sprite_ram[i].tile as u16) * 16;
             }
 
-            let mut sprite_y = (((self.scanline as usize)
-                                 - (self.sprite_ram[i].y as usize))
-                                % (sp_h as usize)) as u8;
+            let mut sprite_y = ((self.scanline as usize)
+                                .wrapping_sub(self.sprite_ram[i].y as usize)
+                                 % (sp_h as usize)) as u8;
             if sp_i.attr & 0x80 != 0 {
                 sprite_y ^= sp_h - 1;
             }
@@ -658,7 +653,7 @@ impl PPU {
         }
     }
 
-    fn pixel(&mut self, cart: &INES) {
+    fn pixel(&mut self, cart: &mut INES) {
         let mut palette = 0;
         let mut obj_palette = 0;
         let mut obj_priority = false;
@@ -668,62 +663,64 @@ impl PPU {
             if self.ppu_mask.is_bg_enabled() && !(!self.ppu_mask.is_bg_left() && x < 8) {
                 palette = (bit_n(self.shift_bg_high, 15 - self.fine_x) << 1)
                     | bit_n(self.shift_bg_low, 15 - self.fine_x);
+
+                if palette != 0 {
+                    palette |= ((bit_n(self.shift_bg_high, 7 - self.fine_x) << 1)
+                                | bit_n(self.shift_bg_low, 7 - self.fine_x)) << 2;
+                }
             }
-            if palette != 0 {
-                palette |= ((bit_n(self.shift_bg_high, 7 - self.fine_x) << 1)
-                    | bit_n(self.shift_bg_low, 7 - self.fine_x)) << 2;
+
+            if self.ppu_mask.is_sp_enabled() && !(!self.ppu_mask.is_sp_left() && x < 8) {
+                let mut i: isize = 8;
+                while i >= 1 {
+                    i -= 1;
+                    let sprite = self.sprite_ram[i as usize];
+                    if sprite.id == 64 {
+                        continue
+                    }
+
+                    let mut sprite_x = x - (sprite.x as isize);
+                    if sprite_x >= 8 {                    
+                        continue
+                    }
+
+                    if sprite.attr & 0x40 != 0 {
+                        sprite_x ^= 7;
+                    }
+
+                    let mut sprite_palette =
+                        (bit_n(sprite.data_high as u16, 7 - (sprite_x as u8)) << 1) 
+                        | bit_n(sprite.data_low as u16, 7 - (sprite_x as u8));
+
+                    if sprite_palette == 0 {
+                        continue
+                    }
+
+                    if sprite.id == 0 && palette != 0 && x != 255 {
+                        self.ppu_status |= PPUSTATUS::SPRITE_HIT;
+                    }
+
+                    sprite_palette |= (sprite.attr & 3) << 2;
+                    obj_palette = sprite_palette + 16;
+                    obj_priority = sprite.attr & 0x20 != 0;
+                }
+
+                if obj_palette != 0 && (palette == 0 || obj_priority == false) {
+                    palette = obj_palette;
+                }
+
+                println!("palette: {}", palette);
+                let rgb_idx = if self.is_rendering() {
+                    self.internal_read(&mut 0x3F00, cart) + palette
+                } else {
+                    self.internal_read(&mut 0x3F00, cart)
+                };
+                println!("rgb_idx: {}", rgb_idx);
+                let img_idx = (self.scanline as usize) * 256 + (x as usize);
+                //self.image[img_idx] = NES_RGB[(rgb_idx % 64) as usize];
+                self.image[img_idx] = NES_RGB[((self.scanline + x) % 64) as usize];
             }
         }
-
-        if self.ppu_mask.is_sp_enabled() && !(!self.ppu_mask.is_sp_left() && x < 8) {
-            let mut i: isize = 8;
-            while i >= 1 {
-                i -= 1;
-                let sprite = self.sprite_ram[i as usize];
-                if sprite.id == 64 {
-                    continue
-                }
-
-                let mut sprite_x = x - (sprite.x as isize);
-                if sprite_x >= 8 {                    
-                    continue
-                }
-
-                // Horizontal flipping
-                if sprite.attr & 0x40 != 0 {
-                    sprite_x ^= 7;
-                }
-
-                let mut sprite_palette =
-                    (bit_n(sprite.data_high as u16, 7 - (sprite_x as u8)) << 1) 
-                    | bit_n(sprite.data_low as u16, 7 - (sprite_x as u8));
-
-                if sprite_palette == 0 {
-                    continue
-                }
-
-                if sprite.id == 0 && palette != 0 && x != 255 {
-                    self.ppu_status |= PPUSTATUS::SPRITE_HIT;
-                }
-
-                sprite_palette |= (sprite.attr & 3) << 2;
-                obj_palette = sprite_palette + 16;
-                obj_priority = sprite.attr & 0x20 != 0;
-            }
-
-            if obj_palette != 0 && (palette == 0 || obj_priority == false) {
-                palette = obj_palette;
-            }
-
-            let rgb_idx = if self.is_rendering() {
-                self.internal_read(&mut 0x3F00, cart) + palette
-            } else {
-                self.internal_read(&mut 0x3F00, cart)
-            };
-            let img_idx = (self.scanline as usize) * 256 + (x as usize);
-            self.image[img_idx] = NES_RGB[rgb_idx as usize];
-        }
-
         self.shift_bg_low <<= 1;
         self.shift_bg_high <<= 1;
         self.shift_attr_low = (self.shift_attr_low << 1) | if self.bit_attr_low {
@@ -751,19 +748,7 @@ impl PPU {
         }
     }
 
-    fn end_vblank(&mut self) {
-        self.ppu_status &= !(PPUSTATUS::SPRITE_HIT | PPUSTATUS::SPRITE_OVERFLOW);
-    }
-
-    fn start_vblank(&mut self) {
-        self.ppu_status |= PPUSTATUS::VBLANK;
-    }
-
-    fn is_nmi_generated(&self) -> bool {
-        (self.ppu_ctrl & PPUCTRL::NMI_ENABLE) == PPUCTRL::NMI_ENABLE
-    }
-
-    fn scanline_cycle(&mut self, s: Scanline, cart: &INES) {
+    fn scanline_cycle(&mut self, s: Scanline, cart: &mut INES) {
         match (s, self.dot) {
             (Scanline::NMI, 1) => {
                 self.ppu_status |= PPUSTATUS::VBLANK;            
@@ -885,7 +870,7 @@ impl PPU {
         }
     }
 
-    pub fn step(&mut self, cart: &INES) {
+    pub fn step(&mut self, cart: &mut INES) {
         match self.scanline {
             000 ... 239 => self.scanline_cycle(Scanline::VISIBLE, cart),
             240         => self.scanline_cycle(Scanline::POST, cart),

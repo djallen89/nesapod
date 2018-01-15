@@ -1,7 +1,13 @@
+use conrod;
+use conrod::backend::glium::glium;
+use conrod::backend::glium::glium::texture::{Texture2d, RawImage2d, ClientFormat};
+use conrod::backend::glium::glium::Surface;
+use conrod::image::Map;
 use std::{i8, u8, u16, fmt, iter};
 use std::io;
 use core::ppu::{IMAGE_SIZE, PPU};
 use core::ines::INES;
+use core::debug::Debug;
 use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleType};
 
 pub const POWERUP_S: u8 = 0xFD;
@@ -149,7 +155,7 @@ pub struct CPU {
     aio_registers: Vec<u8>,
     status_register: StatusFlags,
     ram: [u8; 2048],
-    ppu: PPU,
+    pub ppu: PPU,
     nmi: bool,
     irq: bool,
     cartridge: INES,
@@ -181,8 +187,74 @@ impl CPU {
         self.debug = d
     }
 
+    #[inline(always)]
+    pub fn run_ppu(&mut self, s: isize) -> bool {
+        for _ in 0 .. 341 {
+            self.ppu.step(&mut self.cartridge);
+        }
+        for _ in 1 .. s {
+            for _ in 0 .. 341 {
+                self.ppu.step(&mut self.cartridge);
+            }
+        }
+            
+        if self.ppu.signal_nmi() {
+            self.nmi = true;
+            self.ppu.clear_nmi_signal();
+        }
+
+        if self.ppu.signal_new_frame() {
+            self.ppu.clear_frame_signal();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn run_scanline(&mut self, s: isize) -> bool {
+        if self.nmi {
+            self.handle_nmi();
+        } else if self.irq && !self.status_register.status(StatusFlags::I) {
+            self.handle_irq()
+        }
+        
+        while self.counter > (s * 341) / 3 {
+            self.step();
+        }
+
+        self.run_ppu(341)
+    }
+
+    pub fn run_frame<'a>(&mut self, image_map: &mut Map<Texture2d>,
+                         game_screen: &conrod::image::Id,
+                         display: &glium::Display) {
+        self.counter += FRAME_CYCLES;
+        for s in 0 .. 262 {
+            if self.counter <= 0 {
+                break
+            }
+            let new_frame = self.run_scanline(s);
+            if new_frame {
+                let screen: Vec<u32> = self.print_screen().to_vec();            
+                let mut real_screen = RawImage2d::from_raw_rgb_reversed(&screen, (256, 240));
+                real_screen.format = ClientFormat::U32;
+                let texture = Texture2d::new(display, real_screen).unwrap();
+
+                if let Some(t) = image_map.get_mut(*game_screen) {
+                    *t = texture;
+                } else {
+                    panic!("BAD IMG ID: This should be impossible.")
+                }
+            }
+        }
+    }
+
     pub fn print_screen(&self) -> &[u32; IMAGE_SIZE] {
         self.ppu.image()
+    }
+
+    pub fn signal_new_frame(&self) -> bool {
+        self.ppu.signal_new_frame()
     }
     
     pub fn power_up(ines: INES, debug: bool) -> CPUResult<CPU> {
@@ -253,21 +325,8 @@ impl CPU {
         FRAME_CYCLES - self.counter
     }
 
-    pub fn run_frame(&mut self) {
-        self.counter += FRAME_CYCLES;
-        while self.counter > 0 {
-            if self.nmi {
-	        self.handle_nmi()
-            } else if self.irq && !self.status_register.status(StatusFlags::I) {
-                self.handle_irq()
-            }
-
-            self.step();
-        }
-    }
-
     pub fn step(&mut self) {
-
+        //println!("{}", self);
         let addr = self.pc;
         let opcode = self.read(addr);
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
@@ -292,7 +351,7 @@ impl CPU {
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000 ... 0x1FFF => self.ram[(address % 2048) as usize],
-            0x2000 ... 0x3FFF => self.ppu.read(address),
+            0x2000 ... 0x3FFF => self.ppu.read(address, &mut self.cartridge),
             0x4014            => self.ppu.oam_dma_read(),
             0x4000 ... 0x401F => self.aio_registers[(address - 0x4000) as usize],
             0x4020 ... 0xFFFF | _ => self.cartridge.read(address),
@@ -317,11 +376,11 @@ impl CPU {
                 self.ram[(address % 2048) as usize] = val;
             },
             0x2000 ... 0x3FFF => {
-                let pre = self.ppu.read(address);
+                let pre = self.ppu.read(address, &mut self.cartridge);
                 if self.debug {
                     self.last_instr.push_str(&format!("= {:02X}", pre));
                 }
-                self.ppu.write(address, val);
+                self.ppu.write(address, val, &mut self.cartridge);
             },
             0x4014 => {
                 //read from val*0x0100 ... val*0x0100 + 255
@@ -330,7 +389,7 @@ impl CPU {
                     let val = self.read(b);
                     self.ppu.oam_dma_write(val);
                 }
-                self.counter += 514;
+                self.counter -= 514;
             }
             0x4000 ... 0x4013 | 0x4015 ... 0x401F => {
                 let pre = self.aio_registers[(address - 0x4000) as usize];
@@ -488,7 +547,7 @@ impl CPU {
         use core::addressing::SingleType::*;
         use core::addressing::DoubleType::*;
 
-        self.counter += min_cycles;
+        self.counter -= min_cycles;
 
         match a {
             Invalid | 
@@ -590,14 +649,14 @@ impl CPU {
                             self.last_instr.push_str(&format!("(${:04X}) = {:04X}",
                                                               addr, real_addr));
                         }
-                        self.counter += min_cycles;
+                        self.counter -= min_cycles;
                         self.pc = real_addr;
                     },
                     Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
                         if self.debug { 
                             self.last_instr.push_str(&format!("${:04X} ", addr));
                         }
-                        self.counter += min_cycles;
+                        self.counter -= min_cycles;
                         self.pc = addr;
                     },
                     _ => panic!(format!("JMP doesn't use {:?}", a))
@@ -651,7 +710,7 @@ impl CPU {
                 let val = self.axy[A];
                 self.axy[Y] = val;
                 self.set_zn(val);
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
             //1.74% of instructions are INC ZPG (65%); (72.5%)
             Code::INC => self.inc(a, min_cycles, None),
@@ -667,7 +726,7 @@ impl CPU {
                                                                addr & 0xFF, addr >> 8));
                         self.last_instr.push_str(&format!("${:04X} ", addr));
                     }
-                    self.counter += min_cycles;
+                    self.counter -= min_cycles;
                     self.stack_push_double(pc + 1);
                     self.pc = addr;
                 } else {
@@ -687,7 +746,7 @@ impl CPU {
             Code::RTS => {
                 let addr = self.stack_pop_double();
                 self.pc = addr + 1;
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
             //1.32% AND IMD (82.25%)
             Code::AND => self.bitwise(a, min_cycles, &|acc, x| { acc & x }),
@@ -751,19 +810,19 @@ impl CPU {
                 let val = self.axy[A];
                 self.axy[X] = val;
                 self.set_zn(val);
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
             Code::TXA => {
                 let val = self.axy[X];
                 self.axy[A] = val;
                 self.set_zn(val);
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
             Code::TYA => {
                 let val = self.axy[Y];
                 self.axy[A] = val;
                 self.set_zn(val);
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
             Code::TSX => {
                 self.axy[X] = self.stack_pointer;
@@ -773,29 +832,29 @@ impl CPU {
             Code::TXS => {
                 let val = self.axy[X];
                 self.stack_pointer = val;
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
             
 
             Code::PHA => {
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
                 let val = self.axy[A];
                 self.stack_push(val);
             },
             Code::PLA => {
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
                 let acc = self.stack_pop();
                 self.set_zn(acc);
                 self.axy[A] = acc;
             },
             Code::PHP => {
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
                 self.stack_push(flags.bits);
             },
 
             Code::PLP => {
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
                 let flags = self.stack_pop() & 0b1110_1111;
                 self.status_register.bits = flags | 0b0010_0000;
             },
@@ -805,7 +864,7 @@ impl CPU {
                 self.status_register.bits = flags | 0b0010_0000;
                 let addr = self.stack_pop_double();
                 self.pc = addr;
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
             },
 
             
@@ -819,7 +878,7 @@ impl CPU {
             Code::CLV => self.clear_flag(min_cycles, StatusFlags::V),
 
             Code::BRK => {
-                self.counter += min_cycles;
+                self.counter -= min_cycles;
                 let addr = self.pc + 1;
                 self.stack_push_double(addr);
                 
@@ -1133,12 +1192,12 @@ impl CPU {
     }
 
     fn set_flag(&mut self, min_cycles: isize, flag: StatusFlags) {
-        self.counter += min_cycles;
+        self.counter -= min_cycles;
         self.set_flag_op(flag);
     }
 
     fn clear_flag(&mut self, min_cycles: isize, flag: StatusFlags) {
-        self.counter += min_cycles;
+        self.counter -= min_cycles;
         self.clear_flag_op(flag);
     }
 
@@ -1178,9 +1237,9 @@ impl CPU {
         
         if cond {
             self.pc = next_addr;
-            self.counter += min_cycles + 1 + extra;
+            self.counter -= min_cycles + 1 + extra;
         } else {
-            self.counter += min_cycles;
+            self.counter -= min_cycles;
         }
     }
 
@@ -1213,7 +1272,7 @@ impl CPU {
 
     fn modify_pc_counter(&mut self, bytes: u16, cycles: isize) {
         self.pc += bytes;
-        self.counter += cycles;
+        self.counter -= cycles;
     }
 
     fn rol(&self, lhs: u8) -> (u8, bool) {

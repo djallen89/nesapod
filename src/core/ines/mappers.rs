@@ -110,7 +110,7 @@ pub mod sxrom {
             bank + idx
         }
 
-        pub fn write(&mut self, addr: u16, val: u8) {
+        pub fn write(&mut self, addr: u16, val: u8) -> Mirroring {
             let len = self.sr_len();
             if len < 4 {
                 self.shift_register(val)
@@ -120,6 +120,8 @@ pub mod sxrom {
             } else {
                 panic!(format!("Impossible shift register length {}", len))
             }
+
+            self.mirroring
         }
         
         fn sr_len(&self) -> usize {

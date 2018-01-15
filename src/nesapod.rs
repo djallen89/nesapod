@@ -1,14 +1,16 @@
 use conrod;
+use conrod::Sizeable;
 use conrod::backend::glium::glium;
 use conrod::backend::glium::glium::Surface;
 use find_folder;
+use std::mem;
 use core;
 use core::cpu::CPU;
 use core::ines::INES;
 use glium::glutin::VirtualKeyCode as VKC;
 
-const WIDTH: u32 = 256*4;
-const HEIGHT: u32 = 240*4;
+const WIDTH: u32 = 256;
+const HEIGHT: u32 = 240;
 
 struct Fonts {
     regular: conrod::text::font::Id,
@@ -40,7 +42,9 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
     let window = glium::glutin::WindowBuilder::new()
         .with_title("Text Demo")
         .with_dimensions(WIDTH, HEIGHT);
+
     let context = glium::glutin::ContextBuilder::new()
+        .with_pixel_format(8, 8)
         .with_vsync(true)
         .with_multisampling(4);
     let display = glium::Display::new(window, context, &events_loop).unwrap();
@@ -63,7 +67,33 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
 
     let mut renderer = conrod::backend::glium::Renderer::new(&display).unwrap();
 
-    let image_map = conrod::image::Map::<glium::texture::Texture2d>::new();
+    let mut image_map = conrod::image::Map::<glium::texture::Texture2d>::new();
+    let screen: Vec<u32> = emulator.print_screen().to_vec();
+    let mut real_screen = glium::texture::RawImage2d::from_raw_rgba_reversed(&screen, (256, 240));
+    real_screen.format = glium::texture::ClientFormat::U32;
+    let texture = glium::texture::Texture2d::new(&display, real_screen).unwrap();
+
+    /*
+    let game_screen = image_map.insert(texture);
+    let mut temp_screen: Vec<u32> = Vec::new();
+    for m in 0 .. 240 {
+        println!("{}", m);
+        for n in 0 .. 256 {
+            temp_screen.push(10 * n + 4 * m);
+        }
+    }
+    let mut temp = glium::texture::RawImage2d::from_raw_rgb_reversed(&temp_screen, (256, 240));
+    temp.format = glium::texture::ClientFormat::U32;
+    let texture = glium::texture::Texture2d::new(&display, temp).unwrap();
+    if let Some(t) = image_map.get_mut(game_screen) {
+            *t = texture;
+    } else {
+    panic!("BAD IMG ID: This should be impossible.")
+    }
+
+     */
+    
+    let game_screen = image_map.insert(texture);
 
     let mut event_loop = support::EventLoop::new();
     'main: loop {
@@ -98,26 +128,13 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
                         ..
                     } => {
 
-                        let mut steps = match k {
+                        let mut _steps = match k {
                             VKC::Key1 => 1,
-                            VKC::F => 1 << 4,
-                            VKC::L => 1 << 8,
-                            VKC::Z => 1 << 12,
-                            VKC::T => 1 << 16,
-                            VKC::M => 1 << 20,
-                            VKC::U => 1 << 24,
+                            VKC::Key2 => 15,
+                            VKC::Key3 => 30,
+                            VKC::Key4 => 60,
                             _ => 0
                         };
-                        while steps > 0 {
-                            emulator.run_frame();
-                            debugger.input(&format!("{}\n", emulator));
-                            steps -= 1;
-                        }
-                        if dump {
-                            let msg = emulator.dump_ram();
-                            print!("{}", msg);
-                            //debugger.input(&msg);
-                        }
                     },
                     _ => (),
                 },
@@ -125,26 +142,37 @@ pub fn main(logging: bool, rom: Option<String>, debug: bool, dump: bool) {
             }
         }
 
-        let screen = emulator.print_screen();
-        /*let mut screen_image = String::new();
-        for scanline in 0 .. 240 {
-            for pixel in 0 .. 256 {
-                screen_image.push_str(&format!("{}", screen[scanline * 256 + pixel] as char));
-            }
-            screen_image.push_str("\n");
-        }*/
+        emulator.run_frame(&mut image_map, &game_screen, &display);
+        
+        if dump {
+            let msg = emulator.dump_ram();
+            print!("{}", msg);
+        }
 
         let msg = debugger.output();
-        set_ui(ui.set_widgets(), &ids, &fonts, &msg);
-        // Render the `Ui` and then display it on the screen.
-        if let Some(primitives) = ui.draw_if_changed() {
-            renderer.fill(&display, primitives, &image_map);
-            let mut target = display.draw();
-            target.clear_color(0.0, 0.0, 0.0, 1.0);
-            renderer.draw(&display, &mut target, &image_map).unwrap();
-            target.finish().unwrap();
+        if debug { 
+            println!("{}", msg);
         }
+        set_ui(ui.set_widgets(), &ids, &fonts, &msg, game_screen);
+        // Render the `Ui` and then display it on the screen.
+        let primitives = ui.draw();
+        renderer.fill(&display, primitives, &image_map);
+        let mut target = display.draw();
+        target.clear_color(0.0, 0.0, 0.0, 1.0);
+        renderer.draw(&display, &mut target, &image_map).unwrap();
+        target.finish().unwrap();
+
     }
+
+    /*
+    let screen = emulator.print_screen();
+    for s in 0 .. 240 {
+        for d in 0 .. 256 {
+            print!("{:04X}", screen[s * 256 + d]);
+        }
+        println!("");
+    }
+     */
 
     match debugger.flush_all() {
         Ok(_) => {},
@@ -163,21 +191,31 @@ widget_ids!{
     }
 }
 
-fn set_ui(ref mut ui: conrod::UiCell, ids: &Ids, fonts: &Fonts, msg: &str) {
+fn set_ui(ref mut ui: conrod::UiCell, ids: &Ids, fonts: &Fonts,
+          _msg: &str, screen: conrod::image::Id)
+{
     use conrod::{color, widget, Colorable, Positionable, Scalar, Widget};
 
-    widget::Canvas::new().flow_right(&[
+    /*widget::Canvas::new().flow_right(&[
         (ids.middle_col, widget::Canvas::new().color(color::DARK_CHARCOAL)),
-    ]).set(ids.master, ui);
+    ]).set(ids.master, ui);*/
 
     const PAD: Scalar = 20.0;
 
+    
+    widget::Image::new(screen)
+        .w_h(256.0, 240.0)
+        //.align_middle_x_of(ids.master)
+        .set(ids.master, ui);
+
+    /*
     widget::Text::new(msg)
         .font_id(fonts.regular)
         .color(color::LIGHT_GREEN)
         .middle_of(ids.middle_col)
         .center_justify()
         .set(ids.middle_text, ui);
+     */
 }
 
 
@@ -279,9 +317,9 @@ mod support {
             let last_update = self.last_update;
             let sixteen_ms = std::time::Duration::from_millis(16);
             let duration_since_last_update = std::time::Instant::now().duration_since(last_update);
-            //if duration_since_last_update < sixteen_ms {
-            //std::thread::sleep(sixteen_ms - duration_since_last_update);
-            //}
+            if duration_since_last_update < sixteen_ms {
+                std::thread::sleep(sixteen_ms - duration_since_last_update);
+            }
 
             let mut events = Vec::new();
             events_loop.poll_events(|event| events.push(event));

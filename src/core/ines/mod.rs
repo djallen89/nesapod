@@ -316,7 +316,10 @@ impl INES {
             Mapper::SXROM(ref mut sxrom) => {
                 match idx {
                     0x0000 ... 0x401F => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
-                    0x4020 ... 0x5999 => sxrom.write(idx, val), 
+                    0x4020 ... 0x5999 => {
+                        let mirror = sxrom.write(idx, val);
+                        self.mirror = mirror;
+                    }
                     0x6000 ... 0x7FFF => {
                         //FIXME
                         if true { // sxrom.prg_ram_enabled() {
@@ -325,14 +328,17 @@ impl INES {
                             //Err(format!("Could not write {:02X} to {:04X}; no catridge RAM", val, idx))
                         }
                     },
-                    x => sxrom.write(x, val),
+                    x => {
+                        let mirror = sxrom.write(x, val);
+                        self.mirror = mirror;
+                    }
                 }
             },
             x => panic!(format!("{:?} not covered yet", x))
         }
     }
 
-    pub fn ppu_read(&self, idx: u16) -> u8 {
+    pub fn ppu_read(&mut self, idx: u16) -> u8 {
         assert!(idx < 0x2000);
         match self.mapper {
             Mapper::NROM => self.chr_mem[idx as usize],
@@ -341,19 +347,15 @@ impl INES {
         }            
     }
     
-    pub fn ppu_write(&self, idx: u16, val: u8) {
+    pub fn ppu_write(&mut self, idx: u16, val: u8) {
         assert!(idx < 0x2000);
         match self.mapper {
-            Mapper::NROM => self.chr_mem[idx as usize],
-            Mapper::SXROM(ref sxrom) => self.chr_mem[sxrom.chr_read(idx) as usize],
+            Mapper::NROM => self.chr_mem[idx as usize] = val,
+            Mapper::SXROM(ref sxrom) => self.chr_mem[sxrom.chr_read(idx) as usize] = val,
             x => panic!("{:?}: PPU READ Not implemented!", x)
         };
     }
     
-    pub fn mapper(&self) -> Mapper {
-        self.mapper.clone()
-    }
-
     pub fn mirroring(&self) -> Mirroring {
         self.mirror
     }
