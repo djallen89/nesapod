@@ -9,11 +9,8 @@ bitflags = "1.0.1"
 pancurses = "0.13.0"
 time = "0.1.39"
 find_folder = "*"
-glium = "0.19.0"
+sdl2 = "*"
 
-[dependencies.conrod]
-version = "0.57.0"
-features = ["winit", "glium"]
 
 [features]
 

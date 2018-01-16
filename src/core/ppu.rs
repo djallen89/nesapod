@@ -5,6 +5,7 @@ pub const VISIBLE_SCANLINES: usize = 240;
 pub const SCANLINE_LENGTH: usize = 256;
 pub const IMAGE_SIZE: usize = VISIBLE_SCANLINES * SCANLINE_LENGTH;
 
+/*
 pub const NES_RGB: [u32; 64] = [
     0x7C7C7C, 0x0000FC, 0x0000BC, 0x4428BC, 0x940084, 0xA80020, 0xA81000, 0x881400,
     0x503000, 0x007800, 0x006800, 0x005800, 0x004058, 0x000000, 0x000000, 0x000000,
@@ -15,7 +16,7 @@ pub const NES_RGB: [u32; 64] = [
     0xFCFCFC, 0xA4E4FC, 0xB8B8F8, 0xD8B8F8, 0xF8B8F8, 0xF8A4C0, 0xF0D0B0, 0xFCE0A8,
     0xF8D878, 0xD8F878, 0xB8F8B8, 0xB8F8D8, 0x00FCFC, 0xF8D8F8, 0x000000, 0x000000
 ];
-/*
+*/
 pub const NES_RGB: [(u8, u8, u8); 64] = [
     (0x7C, 0x7C, 0x7C), (0x00, 0x00, 0xFC), (0x00, 0x00, 0xBC), (0x44, 0x28, 0xBC), (0x94, 0x00, 0x84), (0xA8, 0x00, 0x20), (0xA8, 0x10, 0x00), (0x88, 0x14, 0x00),
     (0x50, 0x30, 0x00), (0x00, 0x78, 0x00), (0x00, 0x68, 0x00), (0x00, 0x58, 0x00), (0x00, 0x40, 0x58), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00),
@@ -26,7 +27,7 @@ pub const NES_RGB: [(u8, u8, u8); 64] = [
     (0xFC, 0xFC, 0xFC), (0xA4, 0xE4, 0xFC), (0xB8, 0xB8, 0xF8), (0xD8, 0xB8, 0xF8), (0xF8, 0xB8, 0xF8), (0xF8, 0xA4, 0xC0), (0xF0, 0xD0, 0xB0), (0xFC, 0xE0, 0xA8),
     (0xF8, 0xD8, 0x78), (0xD8, 0xF8, 0x78), (0xB8, 0xF8, 0xB8), (0xB8, 0xF8, 0xD8), (0x00, 0xFC, 0xFC), (0xF8, 0xD8, 0xF8), (0x00, 0x00, 0x00), (0x00, 0x00, 0x00)
 ];
-*/
+
 bitflags! {
     pub struct PPUCTRL: u8 {
         const INIT = 0;
@@ -270,7 +271,7 @@ pub struct PPU {
     bit_attr_low: bool,
     bit_attr_high: bool,
     
-    image: [u32; IMAGE_SIZE],
+    image: [(u8, u8, u8); IMAGE_SIZE],
     
     scanline: isize,
     dot: isize,
@@ -325,7 +326,7 @@ impl PPU {
             bit_attr_low: false,
             bit_attr_high: false,
 
-            image: [0; IMAGE_SIZE],
+            image: [(0, 0, 0); IMAGE_SIZE],
                       
             scanline: 0,
             dot: 0,
@@ -401,7 +402,7 @@ impl PPU {
         self.ppu_ctrl.bits = 0;
         self.ppu_mask.bits = 0;
         self.ppu_status.bits = 0;
-        self.image = [0; IMAGE_SIZE];
+        self.image = [(0, 0, 0); IMAGE_SIZE];
         self.ci_ram = [0xFF; 2048];
         self.oam_ram = [0x00; 256];
     }
@@ -670,7 +671,7 @@ impl PPU {
                 }
             }
 
-            if self.ppu_mask.is_sp_enabled() && !(!self.ppu_mask.is_sp_left() && x < 8) {
+            if true { //self.ppu_mask.is_sp_enabled() && !(!self.ppu_mask.is_sp_left() && x < 8) {
                 let mut i: isize = 8;
                 while i >= 1 {
                     i -= 1;
@@ -709,16 +710,14 @@ impl PPU {
                     palette = obj_palette;
                 }
 
-                println!("palette: {}", palette);
                 let rgb_idx = if self.is_rendering() {
                     self.internal_read(&mut 0x3F00, cart) + palette
                 } else {
                     self.internal_read(&mut 0x3F00, cart)
                 };
-                println!("rgb_idx: {}", rgb_idx);
                 let img_idx = (self.scanline as usize) * 256 + (x as usize);
-                //self.image[img_idx] = NES_RGB[(rgb_idx % 64) as usize];
-                self.image[img_idx] = NES_RGB[((self.scanline + x) % 64) as usize];
+                self.image[img_idx] = NES_RGB[(rgb_idx % 64) as usize];
+                //self.image[img_idx] = (self.scanline as u8, x as u8, 2 * (x as u8))
             }
         }
         self.shift_bg_low <<= 1;
@@ -891,7 +890,7 @@ impl PPU {
         }
     }
 
-    pub fn image(&self) -> &[u32; IMAGE_SIZE] {
+    pub fn image(&self) -> &[(u8, u8, u8); IMAGE_SIZE] {
         &self.image
     }
 }

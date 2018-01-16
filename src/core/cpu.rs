@@ -1,13 +1,8 @@
-use conrod;
-use conrod::backend::glium::glium;
-use conrod::backend::glium::glium::texture::{Texture2d, RawImage2d, ClientFormat};
-use conrod::backend::glium::glium::Surface;
-use conrod::image::Map;
 use std::{i8, u8, u16, fmt, iter};
 use std::io;
 use core::ppu::{IMAGE_SIZE, PPU};
 use core::ines::INES;
-use core::debug::Debug;
+use super::Debug;
 use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleType};
 
 pub const POWERUP_S: u8 = 0xFD;
@@ -148,7 +143,7 @@ impl fmt::Display for Code {
 }
 
 pub struct CPU {
-    counter: isize,
+    pub counter: isize,
     pc: u16,
     stack_pointer: u8,
     axy: Vec<u8>,
@@ -225,9 +220,7 @@ impl CPU {
         self.run_ppu(341)
     }
 
-    pub fn run_frame<'a>(&mut self, image_map: &mut Map<Texture2d>,
-                         game_screen: &conrod::image::Id,
-                         display: &glium::Display) {
+    pub fn run_frame<'a>(&mut self) { //,
         self.counter += FRAME_CYCLES;
         for s in 0 .. 262 {
             if self.counter <= 0 {
@@ -235,6 +228,7 @@ impl CPU {
             }
             let new_frame = self.run_scanline(s);
             if new_frame {
+                /*
                 let screen: Vec<u32> = self.print_screen().to_vec();            
                 let mut real_screen = RawImage2d::from_raw_rgb_reversed(&screen, (256, 240));
                 real_screen.format = ClientFormat::U32;
@@ -245,12 +239,26 @@ impl CPU {
                 } else {
                     panic!("BAD IMG ID: This should be impossible.")
                 }
+                 */
             }
         }
     }
 
-    pub fn print_screen(&self) -> &[u32; IMAGE_SIZE] {
-        self.ppu.image()
+    pub fn print_screen(&self) -> Vec<u8> {
+        println!("Printing screen!");
+        let mut image: Vec<u8> = Vec::with_capacity(IMAGE_SIZE * 4);
+        for p in self.ppu.image().iter() {
+            image.push(0x33);
+            image.push(0xA7);
+            image.push(0xCC);
+            image.push(0x17);
+            //image.push(0);
+            //image.push(p.0);
+            //image.push(p.1);
+            //image.push(p.2);
+        }
+        //self.ppu.image().to_vec()
+        image
     }
 
     pub fn signal_new_frame(&self) -> bool {
