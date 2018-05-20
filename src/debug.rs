@@ -13,6 +13,7 @@ pub struct Debug {
     max_length: usize,
     logname: Option<PathBuf>,
     messages: VecDeque<String>,
+    len_since_read: usize
 }
 
 pub fn default_log(logging: bool) -> Option<PathBuf> {
@@ -39,11 +40,12 @@ impl Debug {
             disp_length: cap,
             max_length: 1024,
             logname: default_log(logging),
-            messages: VecDeque::with_capacity(1024)
+            messages: VecDeque::with_capacity(1024),
+            len_since_read: 0,
         }
     }
 
-    pub fn output(&self) -> String {
+    pub fn output(&mut self) -> String {
         let mut out = String::new();
         let len = self.messages.len();
         let d = self.disp_length;
@@ -56,7 +58,21 @@ impl Debug {
         for msg in self.messages.iter().skip(start).take(d) { 
             out.push_str(msg);
         }
+        self.len_since_read = 0;
         out
+    }
+
+    pub fn print(&mut self) {
+        let m = self.messages.len();
+        let n = self.len_since_read;
+        println!("{}", n);
+        for i in 0 .. n {
+            match self.messages.get(m - n + i) {
+                Some(x) => println!("{}", x),
+                None => break
+            }
+        }
+        self.len_since_read = 0;
     }
 
     pub fn input(&mut self, msg: &str) {
@@ -68,6 +84,7 @@ impl Debug {
             }
         }
         self.messages.push_back(format!("{}", msg));
+        self.len_since_read += 1;
     }
 
     fn flush(&mut self, n: usize) -> Result<(), IOError> {
@@ -92,5 +109,12 @@ impl Debug {
     pub fn flush_all(&mut self) -> Result<(), IOError> {
         let n = self.messages.len();
         self.flush(n)
+    }
+
+    pub fn get(&self, idx: usize) -> String {
+        match self.messages.get(idx) {
+            Some(x) => x.clone(),
+            None => format!("index out of bounds")
+        }
     }
 }

@@ -11,6 +11,7 @@ extern crate sdl2;
 use getopts::Options;
 use std::env;
 
+#[cfg(feature = "debug")]
 pub mod debug;
 pub mod core;
 pub mod nesapod;
@@ -21,7 +22,6 @@ fn main() {
     let program = args[0].clone();
     let mut opts = Options::new();
     opts.optopt("r", "rom", "select a rom", ".nes");
-    opts.optflag("d", "debug", "debug CPU");
     opts.optflag("l", "log", "log messages to a file");
     opts.optflag("h", "help", "print this help menu");
     let matches = match opts.parse(&args[1..]) {
@@ -35,13 +35,12 @@ fn main() {
     }
 
     let log = matches.opt_present("l");
-    let debug = matches.opt_present("d");
     let rom = if matches.opt_present("r") {
         matches.opt_str("r")
     } else {
         None
     };
 
-    nesapod::main(rom, debug, log)
+    nesapod::main(rom, log)
 }
 

@@ -1,0 +1,11 @@
+pub const POWERUP_S: u8 = 0xFD;
+pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
+pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
+pub const FRAME_CYCLES: isize = 29781;
+pub const RESET_VECTOR: u16 = 0xFFFC;
+pub const NMI_VECTOR: u16 = 0xFFFA;
+pub const IRQ_VECTOR: u16 = 0xFFFE;
+pub const STACK_REGION: u16 = 0x0100;
+pub const A: usize = 0;
+pub const X: usize = 1;
+pub const Y: usize = 2;

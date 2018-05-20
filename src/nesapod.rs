@@ -1,38 +1,62 @@
-use sdl2;
-use sdl2::pixels::{Color, PixelFormatEnum};
-use sdl2::event::Event;
-use sdl2::keyboard::Keycode;
-use sdl2::render::{Canvas, TextureCreator, TextureAccess};
-use sdl2::video::Window;
-
 use find_folder;
 use std;
-use std::time::Duration;
-use std::thread;
+use std::io;
 use core;
-use core::cpu::{CPU, FRAME_CYCLES};
+use core::cpu::{CPU};
 use core::ines::INES;
+#[cfg(feature = "debug")]
 use super::debug::Debug;
 
-const WIDTH: u32 = 256;
-const HEIGHT: u32 = 240;
-
+#[cfg(feature = "debug")]
 pub struct Nesapod {
-    debugger: Option<Debug>,
+    pub debugger: Debug,
     core: CPU,
 }
 
+#[cfg(feature = "debug")]
 impl Nesapod {
-    pub fn new(rom: Option<String>, debug: bool, logging: bool) -> Nesapod {
+    pub fn new(rom: Option<String>, logging: bool) -> Nesapod {
         let romname = match rom {
             Some(r) => r,
             None => format!("assets/instr_test-v5/official_only.nes")
         };
+        
+        let ines = match INES::new(&romname) {
+            Ok(r) => r,
+            Err(f) => panic!(f)
+        };
 
-        let debugger = if debug {
-            Some(Debug::new(32, logging))
-        } else {
-            None
+        let core = match CPU::power_up(ines) {
+            Ok(r) => r,
+            Err(f) => panic!(f)
+        };
+
+        Nesapod {
+            debugger: Debug::new(32, logging),
+            core: core
+        }
+    }
+
+    pub fn run(&mut self, n: usize) {
+        for s in 0 .. n {
+            self.core.exec();
+            self.debugger.input(&format!("{}", self.core));
+        }
+        self.debugger.print();
+    }
+}
+
+#[cfg(not(feature = "debug"))]
+pub struct Nesapod {
+    core: CPU
+}
+
+#[cfg(not(feature = "debug"))]
+impl Nesapod {
+    pub fn new(rom: Option<String>, logging: bool) -> Nesapod {
+        let romname = match rom {
+            Some(r) => r,
+            None => format!("assets/instr_test-v5/official_only.nes")
         };
 
         let ines = match INES::new(&romname) {
@@ -40,116 +64,53 @@ impl Nesapod {
             Err(f) => panic!(f)
         };
 
-        let core = match CPU::power_up(ines, debug) {
+        let core = match CPU::power_up(ines) {
             Ok(r) => r,
             Err(f) => panic!(f)
         };
-
-        let mut nes = Nesapod {
-            debugger: debugger,
-            core: core,
-        };
-
-        nes.core.reset();
-        nes
-    }
-
-    pub fn render(&mut self, canvas: &mut Canvas<Window>) {
-        //canvas.clear();
-        let maybe_texture = canvas.texture_creator();
-        let mut texture = match maybe_texture.create_texture(PixelFormatEnum::RGB24,
-                                                   TextureAccess::Target,
-                                                   WIDTH,
-                                                   HEIGHT) {
-            Ok(r) => r,
-            Err(f) => panic!(f)
-        };
-
-        let raw_img = self.core.print_screen();
-        match texture.update(None, &mut raw_img.as_slice(), 3 * 256) {
-            Ok(_) => {},
-            Err(f) => panic!(f)
-        }
-
-        match canvas.with_texture_canvas(&mut texture, |texture_canvas| {
-            //texture_canvas.set_draw_color(Color::RGBA(0, 0, 0, 0));
-            texture_canvas.clear();
-            texture_canvas.present();
-        }) {
-            Ok(_) => {},
-            Err(f) => panic!(f)
+        
+        Nesapod {
+            core: core
         }
     }
+
     
-    pub fn run(&mut self, s: &mut isize, canvas: &mut Canvas<Window>) {
-        if *s != 0 {
-            self.core.counter += FRAME_CYCLES;
+    pub fn run(&mut self, n: usize) {
+        for s in 0 .. n {
+            self.core.exec();
         }
-        println!("{}", self.core.counter);
-        while *s < 262 {
-            let new_frame = self.core.run_scanline(*s);
-            if new_frame {
-                self.core.ppu.clear_frame_signal();
-                self.render(canvas);
-            }
-
-            *s += 1;
-        }
-        println!("{}", s);
-
-        *s = 0;
     }
 }
 
-pub fn main(rom: Option<String>, debug: bool, logging: bool) {
-    let sdl_context = sdl2::init().unwrap();
-    let video_subsystem = sdl_context.video().unwrap();
-    
-    let window = video_subsystem.window("Nesapod", WIDTH, HEIGHT)
-        .position_centered()
-        .opengl()
-        .build()
-        .unwrap();
-
-    let mut canvas = window.into_canvas().build().unwrap();
-
-    let mut nesapod = Nesapod::new(rom, debug, logging);
-
-    canvas.set_draw_color(Color::RGB(0x00, 0xFF, 0x00));
-    canvas.clear();
-    canvas.present();
-    std::thread::sleep(std::time::Duration::from_millis(2000));
-    canvas.present();
-    std::thread::sleep(std::time::Duration::from_millis(2000));
-    canvas.present();
-
-    let mut event_pump = sdl_context.event_pump().unwrap();
-
-    let mut s = 0;
-    let mut last_update = std::time::Instant::now();
-    println!("{:?} ", last_update);
-    'running: loop {
-        for event in event_pump.poll_iter() {
-            match event {
-                Event::Quit {..} | Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
-                    break 'running
-                },
-                _ => {}
-            }
+pub fn main(rom: Option<String>, logging: bool) {
+    let mut nesapod = Nesapod::new(rom, logging);
+    loop {
+        let mut input = String::new();
+        match io::stdin().read_line(&mut input) {
+            Ok(_) => {},
+            Err(e) => {
+                println!("error: {}", e);
+                #[cfg(feature = "debug")]
+                nesapod.debugger.input(&format!("{}", e));
+                continue;
+            }                
         }
-
-        let sixteen_ms = std::time::Duration::from_millis(16);
-        let duration_since_last_update = std::time::Instant::now().duration_since(last_update);
-        println!("{:?}", duration_since_last_update);
-        if duration_since_last_update < sixteen_ms {
-            std::thread::sleep(sixteen_ms - duration_since_last_update);
-        } else {
-            println!("no sleep");
+        
+        match input.trim() {
+            "h" => println!("print help"),
+            "q" => break,
+            "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => {
+                let n = input.trim().parse::<usize>().unwrap();
+                nesapod.run(n);
+            },
+            "F" => nesapod.run(16),
+            "H" => nesapod.run(100),
+            "K" => nesapod.run(1000),
+            "T" => nesapod.run(10000),
+            "U" => nesapod.run(100000),
+            "M" => nesapod.run(1000000),
+            _ => {}
         }
-        //std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
-        println!("{:?} ", last_update);
-        nesapod.run(&mut s, &mut canvas);
-        last_update = std::time::Instant::now();
     }
 }
 

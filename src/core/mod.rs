@@ -3,6 +3,8 @@ pub mod cpu;
 pub mod ines;
 pub mod ppu;
 pub mod apu;
-
+pub mod constants;
+pub mod types;
+#[cfg(feature = "debug")]
 pub use super::debug::Debug;
 pub use self::cpu::EmuError;

@@ -1,21 +1,13 @@
 use std::{i8, u8, u16, fmt, iter};
 use std::io;
-use core::ppu::{IMAGE_SIZE, PPU};
 use core::ines::INES;
+#[cfg(feature = "debug")]
 use super::Debug;
 use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleType};
-
-pub const POWERUP_S: u8 = 0xFD;
-pub const _MASTER_FREQ_NTSC: f64 = 21.477272; //MHz
-pub const _CPU_FREQ_NTSC: f64 = 1.789773; //MHz
-pub const FRAME_CYCLES: isize = 29781;
-pub const RESET_VECTOR: u16 = 0xFFFC;
-pub const NMI_VECTOR: u16 = 0xFFFA;
-pub const IRQ_VECTOR: u16 = 0xFFFE;
-pub const STACK_REGION: u16 = 0x0100;
-pub const A: usize = 0;
-pub const X: usize = 1;
-pub const Y: usize = 2;
+use core::constants::{A, X, Y,
+                      STACK_REGION,
+                      IRQ_VECTOR, NMI_VECTOR, RESET_VECTOR,
+                      POWERUP_S};
 
 #[derive(Debug)]
 pub enum EmuError {
@@ -142,6 +134,7 @@ impl fmt::Display for Code {
     }
 }
 
+#[cfg(feature = "debug")]
 pub struct CPU {
     pub counter: isize,
     pc: u16,
@@ -150,17 +143,30 @@ pub struct CPU {
     aio_registers: Vec<u8>,
     status_register: StatusFlags,
     ram: [u8; 2048],
-    pub ppu: PPU,
     nmi: bool,
     irq: bool,
     cartridge: INES,
     last_read_bytes: String,
     last_instr: String,
     last_registers: String,
-    debug: bool
 }
 
+#[cfg(not(feature = "debug"))]
+pub struct CPU {
+    pub counter: isize,
+    pc: u16,
+    stack_pointer: u8,
+    axy: Vec<u8>,
+    aio_registers: Vec<u8>,
+    status_register: StatusFlags,
+    ram: [u8; 2048],
+    nmi: bool,
+    irq: bool,
+    cartridge: INES,
+}
+  
 impl fmt::Display for CPU {
+    #[cfg(feature = "debug")]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let spaces1: String = if self.last_read_bytes.len() >= 15 {
             format!("")
@@ -175,98 +181,19 @@ impl fmt::Display for CPU {
         write!(f, "{}{}{}{}", self.last_read_bytes, spaces1, self.last_instr, spaces2)?;
         write!(f, "{}", self.last_registers)
     }
+
+    #[cfg(not(feature = "debug"))]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let foo = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PC:{:04X}",
+                          self.axy[0], self.axy[1], self.axy[2], self.status_register.bits,
+                          self.stack_pointer, self.pc);
+        write!(f, "{}", foo)
+    }
 }
 
+#[cfg(feature = "debug")]
 impl CPU {
-    pub fn toggle_debug(&mut self, d: bool) {
-        self.debug = d
-    }
-
-    #[inline(always)]
-    pub fn run_ppu(&mut self, s: isize) -> bool {
-        for _ in 0 .. 341 {
-            self.ppu.step(&mut self.cartridge);
-        }
-
-        for _ in 1 .. s {
-            for _ in 0 .. 341 {
-                self.ppu.step(&mut self.cartridge);
-            }
-        }
-            
-        if self.ppu.signal_nmi() {
-            self.nmi = true;
-            self.ppu.clear_nmi_signal();
-        }
-
-        if self.ppu.signal_new_frame() {
-            self.ppu.clear_frame_signal();
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn run_scanline(&mut self, s: isize) -> bool {
-        if self.nmi {
-            self.handle_nmi();
-        } else if self.irq && !self.status_register.status(StatusFlags::I) {
-            self.handle_irq()
-        }
-
-        println!("{}", self.counter);
-        while self.counter > (s * 341) / 3 {
-            self.step();
-            println!("{}", self.counter);
-        }
-
-        self.run_ppu(341)
-    }
-
-    pub fn run_frame<'a>(&mut self) {
-        self.counter += FRAME_CYCLES;
-        for s in 0 .. 262 {
-            println!("{}", s);
-            if self.counter <= 0 {
-                break
-            }
-            let new_frame = self.run_scanline(s);
-            if new_frame {
-                //let screen = self.print_screen();
-                
-                /*
-                let screen: Vec<u32> = self.print_screen().to_vec();            
-                let mut real_screen = RawImage2d::from_raw_rgb_reversed(&screen, (256, 240));
-                real_screen.format = ClientFormat::U32;
-                let texture = Texture2d::new(display, real_screen).unwrap();
-
-                if let Some(t) = image_map.get_mut(*game_screen) {
-                    *t = texture;
-                } else {
-                    panic!("BAD IMG ID: This should be impossible.")
-                }
-                 */
-            }
-        }
-    }
-
-    pub fn print_screen(&self) -> Vec<u8> {
-        let mut image: Vec<u8> = Vec::with_capacity(IMAGE_SIZE * 3);
-        for p in self.ppu.image().iter() {
-            //image.push(0x00);
-            //image.push(0x00);
-            //image.push(0xFF);
-            image.push(*p)
-        }
-        //self.ppu.image().to_vec()
-        image
-    }
-
-    pub fn signal_new_frame(&self) -> bool {
-        self.ppu.signal_new_frame()
-    }
-    
-    pub fn power_up(ines: INES, debug: bool) -> CPUResult<CPU> {
+    pub fn power_up(ines: INES) -> CPUResult<CPU> {
         Ok(CPU {
             counter: 0,
             pc: RESET_VECTOR,
@@ -275,26 +202,43 @@ impl CPU {
             aio_registers: vec![0; 32],
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
-            ppu: PPU::init(ines.mirroring()),
             nmi: false,
             irq: false,
             cartridge: ines,
             last_read_bytes: format!(""),
             last_instr: format!(""),
-            last_registers: if debug {
-                format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
-                        0, 0, 0, (StatusFlags::I | StatusFlags::S).bits, POWERUP_S)
-            } else {
-                format!("")
-            },
-            debug: debug
+            last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
+                                    0, 0, 0,
+                                    (StatusFlags::I | StatusFlags::S).bits,
+                                    POWERUP_S)
         })
     }
+}
 
+#[cfg(not(feature = "debug"))]
+impl CPU {
+    pub fn power_up(ines: INES) -> CPUResult<CPU> {
+        Ok(CPU {
+            counter: 0,
+            pc: RESET_VECTOR,
+            stack_pointer: POWERUP_S,
+            axy: vec![0, 0, 0],
+            aio_registers: vec![0; 32],
+            status_register: StatusFlags::I | StatusFlags::S,
+            ram: [0; 2048],
+            nmi: false,
+            irq: false,
+            cartridge: ines,
+        })
+    }
+}
+
+impl CPU {
     pub fn reset(&mut self) {
         self.stack_pointer -= 3;
         self.pc = RESET_VECTOR;
-        if self.debug {
+        #[cfg(feature = "debug")]
+        {
             self.last_read_bytes = format!("{:04X}  {:02X} ", RESET_VECTOR, 0x4C);
             self.last_instr = format!(" JMP ");
         }
@@ -330,17 +274,14 @@ impl CPU {
         self.pc = IRQ_VECTOR;
     }
 
-    fn elapsed(&self) -> isize {
-        FRAME_CYCLES - self.counter
-    }
-
-    pub fn step(&mut self) {
+    pub fn exec(&mut self) {
         //println!("{}", self);
         let addr = self.pc;
         let opcode = self.read(addr);
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
 
-        if self.debug { 
+        #[cfg(feature = "debug")]
+        {
             self.last_instr = format!("");
             let last_registers = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
                                          self.axy[A], self.axy[X],
@@ -360,8 +301,7 @@ impl CPU {
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000 ... 0x1FFF => self.ram[(address % 2048) as usize],
-            0x2000 ... 0x3FFF => self.ppu.read(address, &mut self.cartridge),
-            0x4014            => self.ppu.oam_dma_read(),
+            0x2000 ... 0x3FFF => panic!("temporary placeholder"),
             0x4000 ... 0x401F => self.aio_registers[(address - 0x4000) as usize],
             0x4020 ... 0xFFFF | _ => self.cartridge.read(address),
         }
@@ -379,39 +319,34 @@ impl CPU {
         match address as usize {
             0x0000 ... 0x1FFF => {
                 let pre = self.ram[(address % 2048) as usize];
-                if self.debug {
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("= {:02X}", pre));
                 }
+
                 self.ram[(address % 2048) as usize] = val;
             },
             0x2000 ... 0x3FFF => {
-                let pre = self.ppu.read(address, &mut self.cartridge);
-                if self.debug {
-                    self.last_instr.push_str(&format!("= {:02X}", pre));
-                }
-                self.ppu.write(address, val, &mut self.cartridge);
             },
-            0x4014 => {
-                //read from val*0x0100 ... val*0x0100 + 255
-                let page = (val as u16) << 8;
-                for b in page .. page + 256 {
-                    let val = self.read(b);
-                    self.ppu.oam_dma_write(val);
-                }
-                self.counter -= 514;
-            }
-            0x4000 ... 0x4013 | 0x4015 ... 0x401F => {
+            0x4000 ... 0x401F => {
                 let pre = self.aio_registers[(address - 0x4000) as usize];
-                if self.debug { 
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("= {:02X}", pre));
                 }
+
                 self.aio_registers[(address - 0x4000) as usize] = val;
             },
             0x4020 ... 0xFFFF | _ => {
                 let pre = self.cartridge.read(address);
-                if self.debug {
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("= {:02X}", pre));
                 }
+
                 self.cartridge.write(address, val)
             },
         }
@@ -421,28 +356,39 @@ impl CPU {
     fn decode_single_byte(&mut self, s: SingleType) -> (isize, u16) {
         let pc = self.pc;
         let addr = self.read(pc);
-        if self.debug {
+
+        #[cfg(feature = "debug")]
+        {
             self.last_read_bytes.push_str(&format!("{:02X} ", addr));
         }
+
         match s {
             SingleType::ZeroPg => {
-                if self.debug { 
+                #[cfg(feature = "debug")]
+                {                
                     self.last_instr.push_str(&format!("${:02X} ", addr));
                 }
+
                 (0, addr as u16)
             },
             SingleType::ZeroPgX => {
                 let real_addr = self.axy[X].wrapping_add(addr) as u16;
-                if self.debug { 
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("${:02X},X @ {:02X} ", addr, real_addr));
                 }
+
                 (0, real_addr)
             },
             SingleType::ZeroPgY => {
                 let real_addr = self.axy[Y].wrapping_add(addr) as u16;
-                if self.debug { 
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("${:02X},Y @ {:02X} ", addr, real_addr));
                 }
+                
                 (0, real_addr)
             },
             SingleType::IndirectX => {
@@ -450,11 +396,14 @@ impl CPU {
                 let real_addr_low = self.ram[(lsb as usize)];
                 let real_addr_high = self.ram[(lsb.wrapping_add(1) as usize)];
                 let real_addr = combine(real_addr_low, real_addr_high);
-                if self.debug { 
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("(${:02X},X) @ {:02X} = {:04X} ", addr,
                                                       addr.wrapping_add(self.axy[X]),
                                                       real_addr));
                 }
+
                 (0, real_addr)
             },
             SingleType::IndirectY => {
@@ -463,10 +412,13 @@ impl CPU {
                 let pre_addr = combine(low, high);
                 let extra = counter_inc(pre_addr, self.axy[Y]);
                 let real_addr = (self.axy[Y] as u16).wrapping_add(pre_addr);
-                if self.debug { 
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("(${:02X}),Y = {:04X} @ {:04X} ",
                                                       addr, pre_addr, real_addr));
                 }
+                
                 (extra, real_addr)
             },
             _ => panic!(format!("{:?} is not supported in decode_singlebyte", s))
@@ -477,30 +429,41 @@ impl CPU {
     fn decode_double_byte(&mut self, d: DoubleType) -> (isize, u16) {
         let pc = self.pc;
         let addr = self.read_two_bytes(pc);
-        if self.debug {
+
+        #[cfg(feature = "debug")]
+        {
             self.last_read_bytes.push_str(&format!("{:02X} {:02X} ", addr & 0xFF, addr >> 8));
         }
+        
         match d {
             DoubleType::Absolute => {
-                if self.debug {
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("${:04X} ", addr));
                 }
+
                 (0, addr)
             },
             DoubleType::AbsoluteX => {
                 let real_addr = (self.axy[X] as u16) + addr;
                 let extra = counter_inc(addr, self.axy[Y]);
-                if self.debug {
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("${:04X},X @ {:04X} ", addr, real_addr));
                 }
+
                 (extra, real_addr)
             },
             DoubleType::AbsoluteY => {
                 let extra = counter_inc(addr, self.axy[X]);
                 let real_addr = (self.axy[Y] as u16).wrapping_add(addr);
-                if self.debug {
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("${:04X},Y @ {:04X} ", addr, real_addr));
                 }
+
                 (extra, real_addr)
             },
             DoubleType::Indirect => panic!("No indirect in decode double byte!")
@@ -523,17 +486,23 @@ impl CPU {
             Address::Acc => (0, 0, self.axy[A]),
             Address::Specified(AddressType::SingleByte(SingleType::Relative)) => {
                 let val = self.read(pc);
-                if self.debug { 
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_read_bytes.push_str(&format!("{:02X} ", val));
                 }
+
                 (1, 0, val)
             },
             Address::Specified(AddressType::SingleByte(SingleType::Immediate)) => {
                 let val = self.read(pc);
-                if self.debug {
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_read_bytes.push_str(&format!("{:02X} ", val));
                     self.last_instr.push_str(&format!("#${:02X} ", val));
                 }
+                
                 (1, 0, val)
             },
             Address::Specified(AddressType::SingleByte(s)) => {
@@ -640,10 +609,13 @@ impl CPU {
             Code::JMP => {                                                  
                 let pc = self.pc;
                 let addr = self.read_two_bytes(pc);
-                if self.debug {
+                
+                #[cfg(feature = "debug")]
+                {
                     self.last_read_bytes.push_str(&format!("{:02X} {:02X}",
                                                            addr & 0xFF, addr >> 8));
                 }
+
                 match a {
                     Address::Specified(AddressType::DoubleByte(DoubleType::Indirect)) => {
                         let low = self.read(addr);
@@ -654,17 +626,22 @@ impl CPU {
                         };
                         let high = self.read(next);
                         let real_addr = combine(low, high);
-                        if self.debug {
+
+                        #[cfg(feature = "debug")]
+                        {
                             self.last_instr.push_str(&format!("(${:04X}) = {:04X}",
                                                               addr, real_addr));
                         }
+
                         self.counter -= min_cycles;
                         self.pc = real_addr;
                     },
                     Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) => {
-                        if self.debug { 
+                        #[cfg(feature = "debug")]
+                        {
                             self.last_instr.push_str(&format!("${:04X} ", addr));
                         }
+
                         self.counter -= min_cycles;
                         self.pc = addr;
                     },
@@ -684,9 +661,12 @@ impl CPU {
             //3.32% of instructions are BIT ZPG (55%) ; (62%)
             Code::BIT => {
                 let (bytes, extra_cycles, val) = self.address_read(a, None);
-                if self.debug {
+
+                #[cfg(feature = "debug")]
+                {
                     self.last_instr.push_str(&format!("= {:02X}", val));
                 }
+
                 let zero = self.axy[A] & val == 0;               
                 if (val & 0b1000_0000) == 0b1000_0000 {
                     self.set_flag_op(StatusFlags::N)
@@ -730,11 +710,14 @@ impl CPU {
                 if a == Address::Specified(AddressType::DoubleByte(DoubleType::Absolute)) {
                     let pc = self.pc;
                     let addr = self.read_two_bytes(pc);
-                    if self.debug {
+
+                    #[cfg(feature = "debug")]
+                    {
                         self.last_read_bytes.push_str(&format!("{:02X} {:02X}",
                                                                addr & 0xFF, addr >> 8));
                         self.last_instr.push_str(&format!("${:04X} ", addr));
                     }
+                    
                     self.counter -= min_cycles;
                     self.stack_push_double(pc + 1);
                     self.pc = addr;
@@ -744,9 +727,13 @@ impl CPU {
             },
             //1.38% LSR A (79.56%)
             Code::LSR => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
+                #[cfg(feature = "debug")]
+                {
+                    if  a == Address::Acc {
+                        cpu.last_instr.push_str("A ");
+                    }
                 }
+                
                 let (result, carry) = lsr(x);
                 cpu.set_czn(result, carry);
                 result
@@ -790,16 +777,22 @@ impl CPU {
             Code::DEY => self.dec(a, min_cycles, Some(Y)),
 
             Code::ASL => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
+                #[cfg(feature = "debug")]
+                {
+                    if a == Address::Acc {
+                        cpu.last_instr.push_str("A ");
+                    }
                 }
                 let (result, carry) = asl(x);
                 cpu.set_czn(result, carry);
                 result
             }),
             Code::ROL => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
+                #[cfg(feature = "debug")]
+                {
+                    if a == Address::Acc {
+                        cpu.last_instr.push_str("A ");
+                    }
                 }
 
                 let (result, next_carry) = cpu.rol(x);
@@ -807,8 +800,11 @@ impl CPU {
                 result
             }),
             Code::ROR => self.address_rmw(a, min_cycles, Some(A), &|cpu, x| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
+                #[cfg(feature = "debug")]
+                {
+                    if a == Address::Acc {
+                        cpu.last_instr.push_str("A ");
+                    }
                 }
                 let (result, next_carry) = cpu.ror(x);
                 cpu.set_czn(result, next_carry);
@@ -902,10 +898,12 @@ impl CPU {
                 if a != Address::Implied {
                     let (bytes, extra_cycle, val) = self.address_read(a, None);
 
-                    if self.debug &&
-                        a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
+                    #[cfg(feature = "debug")]
                     {
-                        self.last_instr.push_str(&format!("= {:02X}", val));
+                        if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
+                        {
+                            self.last_instr.push_str(&format!("= {:02X}", val));
+                        }
                     }
                     
                     self.modify_pc_counter(bytes, min_cycles + extra_cycle);
@@ -916,10 +914,13 @@ impl CPU {
 
             Code::LAX => {
                 let (bytes, extra_cycles, val) = self.address_read(a, None);
-                if self.debug && 
-                    a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
+
+                #[cfg(feature = "debug")]
                 {
-                    self.last_instr.push_str(&format!("= {:02X}", val));
+                    if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate))
+                    {
+                        self.last_instr.push_str(&format!("= {:02X}", val));
+                    }
                 }
                 
                 self.set_zn(val);
@@ -981,8 +982,12 @@ impl CPU {
 
 
             Code::SLO => self.address_rmw(a, min_cycles, Some(A), &|cpu, val| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
+
+                #[cfg(feature = "debug")]
+                {
+                    if a == Address::Acc {
+                        cpu.last_instr.push_str("A ");
+                    }
                 }
                 let (result, carry) = asl(val);
                 cpu.set_czn(result, carry);
@@ -991,8 +996,12 @@ impl CPU {
                 result
             }),
             Code::RLA => self.address_rmw(a, min_cycles, Some(A), &|cpu, val| {
-                if cpu.debug && a == Address::Acc {
-                    cpu.last_instr.push_str("A ");
+
+                #[cfg(feature = "debug")]
+                {
+                    if a == Address::Acc {
+                        cpu.last_instr.push_str("A ");
+                    }
                 }
                 let (result, next_carry) = cpu.rol(val);
                 cpu.set_czn(result, next_carry);
@@ -1127,9 +1136,13 @@ impl CPU {
 
     fn load(&mut self, a: Address, min_cycles: isize, r: usize) {
         let (bytes, extra_cycles, val) = self.address_read(a, None);
-        if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-            self.last_instr.push_str(&format!("= {:02X}", val));
-        } 
+
+        #[cfg(feature = "debug")]
+        {
+            if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                self.last_instr.push_str(&format!("= {:02X}", val));
+            }
+        }
         self.set_zn(val);
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
         self.axy[r] = val;
@@ -1167,9 +1180,12 @@ impl CPU {
 
     fn add(&mut self, a: Address, min_cycles: isize) {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None);
-        
-        if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-            self.last_instr.push_str(&format!("= {:02X}", rhs));
+
+        #[cfg(feature = "debug")]
+        {
+            if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                self.last_instr.push_str(&format!("= {:02X}", rhs));
+            }
         }
         
         let (result, next_carry, overflow) = self.adc(rhs);
@@ -1183,8 +1199,12 @@ impl CPU {
 
     fn sub(&mut self, a: Address, min_cycles: isize) {
         let (bytes, extra_cycles, rhs) = self.address_read(a, None);
-        if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-            self.last_instr.push_str(&format!("= {:02X}", rhs));
+
+        #[cfg(feature = "debug")]
+        {
+            if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                self.last_instr.push_str(&format!("= {:02X}", rhs));
+            }
         }
         let (result, next_carry, overflow) = self.adc(!rhs);
         self.set_cznv(result, next_carry, overflow);
@@ -1240,9 +1260,8 @@ impl CPU {
             (extra, self.pc + (val as u16))
         };
 
-        if self.debug {
-            self.last_instr.push_str(&format!("${:04X} ", next_addr));
-        }
+        #[cfg(feature = "debug")]
+        self.last_instr.push_str(&format!("${:04X} ", next_addr));
         
         if cond {
             self.pc = next_addr;
@@ -1255,9 +1274,13 @@ impl CPU {
     fn cmp(&mut self, a: Address, min_cycles: isize, lhs_idx: usize) {
         let lhs = self.axy[lhs_idx];
         let (bytes, extra_cycles, val) = self.address_read(a, None);
-        if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-            self.last_instr.push_str(&format!("= {:02X}", val));
-        } 
+
+        #[cfg(feature = "debug")]
+        {
+            if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                self.last_instr.push_str(&format!("= {:02X}", val));
+            }
+        }
         let result = lhs.wrapping_sub(val);
         let carry = lhs >= val;
         self.set_czn(result, carry);
@@ -1272,8 +1295,12 @@ impl CPU {
 
     fn bitwise(&mut self, a: Address, min_cycles: isize, op: &Fn(u8, u8) -> u8) {
         let (bytes, extra_cycles, val) = self.address_read(a, None);
-        if self.debug && a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
-            self.last_instr.push_str(&format!("= {:02X}", val));
+
+        #[cfg(feature = "debug")]
+        {
+            if a != Address::Specified(AddressType::SingleByte(SingleType::Immediate)) {
+                self.last_instr.push_str(&format!("= {:02X}", val));
+            }
         }
         self.bitwise_helper(val, op);
         self.modify_pc_counter(bytes, min_cycles + extra_cycles);
