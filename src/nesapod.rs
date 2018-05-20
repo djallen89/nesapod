@@ -57,7 +57,7 @@ impl Nesapod {
     pub fn render(&mut self, canvas: &mut Canvas<Window>) {
         //canvas.clear();
         let maybe_texture = canvas.texture_creator();
-        let mut texture = match maybe_texture.create_texture(PixelFormatEnum::ARGB8888,
+        let mut texture = match maybe_texture.create_texture(PixelFormatEnum::RGB24,
                                                    TextureAccess::Target,
                                                    WIDTH,
                                                    HEIGHT) {
@@ -66,7 +66,7 @@ impl Nesapod {
         };
 
         let raw_img = self.core.print_screen();
-        match texture.update(None, &raw_img, 4) {
+        match texture.update(None, &mut raw_img.as_slice(), 3 * 256) {
             Ok(_) => {},
             Err(f) => panic!(f)
         }
@@ -85,22 +85,19 @@ impl Nesapod {
         if *s != 0 {
             self.core.counter += FRAME_CYCLES;
         }
+        println!("{}", self.core.counter);
         while *s < 262 {
-            if self.core.counter <= 0 {
-                break;
-            }
-
             let new_frame = self.core.run_scanline(*s);
             if new_frame {
                 self.core.ppu.clear_frame_signal();
                 self.render(canvas);
             }
-        }
 
-        *s += 1;
-        if *s >= 262 {
-            *s = 0;
+            *s += 1;
         }
+        println!("{}", s);
+
+        *s = 0;
     }
 }
 
@@ -118,15 +115,19 @@ pub fn main(rom: Option<String>, debug: bool, logging: bool) {
 
     let mut nesapod = Nesapod::new(rom, debug, logging);
 
-    canvas.set_draw_color(Color::RGB(0, 0, 0));
+    canvas.set_draw_color(Color::RGB(0x00, 0xFF, 0x00));
     canvas.clear();
+    canvas.present();
+    std::thread::sleep(std::time::Duration::from_millis(2000));
+    canvas.present();
+    std::thread::sleep(std::time::Duration::from_millis(2000));
     canvas.present();
 
     let mut event_pump = sdl_context.event_pump().unwrap();
 
     let mut s = 0;
     let mut last_update = std::time::Instant::now();
-
+    println!("{:?} ", last_update);
     'running: loop {
         for event in event_pump.poll_iter() {
             match event {
@@ -139,10 +140,14 @@ pub fn main(rom: Option<String>, debug: bool, logging: bool) {
 
         let sixteen_ms = std::time::Duration::from_millis(16);
         let duration_since_last_update = std::time::Instant::now().duration_since(last_update);
+        println!("{:?}", duration_since_last_update);
         if duration_since_last_update < sixteen_ms {
             std::thread::sleep(sixteen_ms - duration_since_last_update);
+        } else {
+            println!("no sleep");
         }
         //std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
+        println!("{:?} ", last_update);
         nesapod.run(&mut s, &mut canvas);
         last_update = std::time::Instant::now();
     }

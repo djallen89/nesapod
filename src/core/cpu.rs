@@ -187,6 +187,7 @@ impl CPU {
         for _ in 0 .. 341 {
             self.ppu.step(&mut self.cartridge);
         }
+
         for _ in 1 .. s {
             for _ in 0 .. 341 {
                 self.ppu.step(&mut self.cartridge);
@@ -212,22 +213,27 @@ impl CPU {
         } else if self.irq && !self.status_register.status(StatusFlags::I) {
             self.handle_irq()
         }
-        
+
+        println!("{}", self.counter);
         while self.counter > (s * 341) / 3 {
             self.step();
+            println!("{}", self.counter);
         }
 
         self.run_ppu(341)
     }
 
-    pub fn run_frame<'a>(&mut self) { //,
+    pub fn run_frame<'a>(&mut self) {
         self.counter += FRAME_CYCLES;
         for s in 0 .. 262 {
+            println!("{}", s);
             if self.counter <= 0 {
                 break
             }
             let new_frame = self.run_scanline(s);
             if new_frame {
+                //let screen = self.print_screen();
+                
                 /*
                 let screen: Vec<u32> = self.print_screen().to_vec();            
                 let mut real_screen = RawImage2d::from_raw_rgb_reversed(&screen, (256, 240));
@@ -245,17 +251,12 @@ impl CPU {
     }
 
     pub fn print_screen(&self) -> Vec<u8> {
-        println!("Printing screen!");
-        let mut image: Vec<u8> = Vec::with_capacity(IMAGE_SIZE * 4);
+        let mut image: Vec<u8> = Vec::with_capacity(IMAGE_SIZE * 3);
         for p in self.ppu.image().iter() {
-            image.push(0x33);
-            image.push(0xA7);
-            image.push(0xCC);
-            image.push(0x17);
-            //image.push(0);
-            //image.push(p.0);
-            //image.push(p.1);
-            //image.push(p.2);
+            //image.push(0x00);
+            //image.push(0x00);
+            //image.push(0xFF);
+            image.push(*p)
         }
         //self.ppu.image().to_vec()
         image
