@@ -64,7 +64,12 @@ impl Debug {
 
     pub fn print(&mut self) {
         let m = self.messages.len();
-        let n = self.len_since_read;
+        let n = if self.len_since_read > m {
+            m
+        } else {
+            self.len_since_read
+        };
+
         println!("{}", n);
         for i in 0 .. n {
             match self.messages.get(m - n + i) {

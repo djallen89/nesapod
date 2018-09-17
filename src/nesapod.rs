@@ -1,16 +1,13 @@
-use find_folder;
-use std;
 use std::io;
-use core;
-use core::cpu::{CPU};
+use core::cpu::CPU;
 use core::ines::INES;
 #[cfg(feature = "debug")]
 use super::debug::Debug;
 
 #[cfg(feature = "debug")]
 pub struct Nesapod {
-    pub debugger: Debug,
-    core: CPU,
+    debugger: Debug,
+    cpu: CPU,
 }
 
 #[cfg(feature = "debug")]
@@ -26,21 +23,21 @@ impl Nesapod {
             Err(f) => panic!(f)
         };
 
-        let core = match CPU::power_up(ines) {
+        let cpu = match CPU::power_up(ines) {
             Ok(r) => r,
             Err(f) => panic!(f)
         };
 
         Nesapod {
             debugger: Debug::new(32, logging),
-            core: core
+            cpu: cpu,
         }
     }
 
     pub fn run(&mut self, n: usize) {
         for s in 0 .. n {
-            self.core.exec();
-            self.debugger.input(&format!("{}", self.core));
+            self.cpu.exec();
+            self.debugger.input(&format!("{}", self.cpu));
         }
         self.debugger.print();
     }
@@ -48,7 +45,7 @@ impl Nesapod {
 
 #[cfg(not(feature = "debug"))]
 pub struct Nesapod {
-    core: CPU
+    cpu: CPU,
 }
 
 #[cfg(not(feature = "debug"))]
@@ -64,26 +61,31 @@ impl Nesapod {
             Err(f) => panic!(f)
         };
 
-        let core = match CPU::power_up(ines) {
+        let cpu = match CPU::power_up(ines) {
             Ok(r) => r,
             Err(f) => panic!(f)
         };
-        
+
         Nesapod {
-            core: core
+            cpu: cpu,
         }
     }
 
     
     pub fn run(&mut self, n: usize) {
         for s in 0 .. n {
-            self.core.exec();
+            self.cpu.exec();
         }
     }
 }
 
 pub fn main(rom: Option<String>, logging: bool) {
     let mut nesapod = Nesapod::new(rom, logging);
+    let help = "n @ 1 ... 9 => run n times
+H => 16, H => 100, K => 1000, T => 10,000,
+U => 100,000, => M = 1,000,000, G => 100,000,000
+q => quit
+h => print this message";
     loop {
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
@@ -97,7 +99,8 @@ pub fn main(rom: Option<String>, logging: bool) {
         }
         
         match input.trim() {
-            "h" => println!("print help"),
+            "h" => println!("{}", help),
+            "d" => println!("{}", nesapod.cpu.dump_ram()),
             "q" => break,
             "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => {
                 let n = input.trim().parse::<usize>().unwrap();
@@ -109,6 +112,7 @@ pub fn main(rom: Option<String>, logging: bool) {
             "T" => nesapod.run(10000),
             "U" => nesapod.run(100000),
             "M" => nesapod.run(1000000),
+            "G" => nesapod.run(100000000),
             _ => {}
         }
     }

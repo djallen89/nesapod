@@ -1,8 +1,7 @@
 use std::{i8, u8, u16, fmt, iter};
 use std::io;
 use core::ines::INES;
-#[cfg(feature = "debug")]
-use super::Debug;
+use core::ppu::PPU;
 use core::addressing::{OPCODE_TABLE, Address, AddressType, SingleType, DoubleType};
 use core::constants::{A, X, Y,
                       STACK_REGION,
@@ -139,12 +138,13 @@ pub struct CPU {
     pub counter: isize,
     pc: u16,
     stack_pointer: u8,
-    axy: Vec<u8>,
-    aio_registers: Vec<u8>,
+    axy: [u8; 3],
+    aio_registers: [u8; 32],
     status_register: StatusFlags,
     ram: [u8; 2048],
     nmi: bool,
     irq: bool,
+    ppu: PPU,
     cartridge: INES,
     last_read_bytes: String,
     last_instr: String,
@@ -156,12 +156,13 @@ pub struct CPU {
     pub counter: isize,
     pc: u16,
     stack_pointer: u8,
-    axy: Vec<u8>,
-    aio_registers: Vec<u8>,
+    axy: [u8; 3],
+    aio_registers: [u8; 32],
     status_register: StatusFlags,
     ram: [u8; 2048],
     nmi: bool,
     irq: bool,
+    ppu: PPU,
     cartridge: INES,
 }
   
@@ -194,23 +195,25 @@ impl fmt::Display for CPU {
 #[cfg(feature = "debug")]
 impl CPU {
     pub fn power_up(ines: INES) -> CPUResult<CPU> {
+        let ppu = PPU::init(ines.mirroring());
         Ok(CPU {
             counter: 0,
             pc: RESET_VECTOR,
             stack_pointer: POWERUP_S,
-            axy: vec![0, 0, 0],
-            aio_registers: vec![0; 32],
+            axy: [0; 3],
+            aio_registers: [0; 32],
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
             nmi: false,
             irq: false,
+            ppu: ppu,
             cartridge: ines,
             last_read_bytes: format!(""),
             last_instr: format!(""),
             last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
                                     0, 0, 0,
                                     (StatusFlags::I | StatusFlags::S).bits,
-                                    POWERUP_S)
+                                    POWERUP_S),
         })
     }
 }
@@ -218,16 +221,18 @@ impl CPU {
 #[cfg(not(feature = "debug"))]
 impl CPU {
     pub fn power_up(ines: INES) -> CPUResult<CPU> {
+        let ppu = PPU::init(ines.mirroring());
         Ok(CPU {
             counter: 0,
             pc: RESET_VECTOR,
             stack_pointer: POWERUP_S,
-            axy: vec![0, 0, 0],
-            aio_registers: vec![0; 32],
+            axy: [0; 3],
+            aio_registers: [0; 32],
             status_register: StatusFlags::I | StatusFlags::S,
             ram: [0; 2048],
             nmi: false,
             irq: false,
+            ppu: ppu,
             cartridge: ines,
         })
     }
@@ -275,7 +280,6 @@ impl CPU {
     }
 
     pub fn exec(&mut self) {
-        //println!("{}", self);
         let addr = self.pc;
         let opcode = self.read(addr);
         let (code, address, cycles) = OPCODE_TABLE[opcode as usize];
@@ -301,7 +305,8 @@ impl CPU {
     pub fn read(&mut self, address: u16) -> u8 {
         match address {
             0x0000 ... 0x1FFF => self.ram[(address % 2048) as usize],
-            0x2000 ... 0x3FFF => panic!("temporary placeholder"),
+            0x2000 ... 0x3FFF => self.ppu.read(address, &mut self.cartridge),
+            0x4014            => self.ppu.oam_dma_read(),
             0x4000 ... 0x401F => self.aio_registers[(address - 0x4000) as usize],
             0x4020 ... 0xFFFF | _ => self.cartridge.read(address),
         }
@@ -328,6 +333,14 @@ impl CPU {
                 self.ram[(address % 2048) as usize] = val;
             },
             0x2000 ... 0x3FFF => {
+                let pre = self.ppu.read(address, & mut self.cartridge);
+
+                #[cfg(feature = "debug")]
+                {
+                    self.last_instr.push_str(&format!("={:02X}", pre));
+                }
+                
+                self.ppu.write(address, val, &mut self.cartridge);
             },
             0x4000 ... 0x401F => {
                 let pre = self.aio_registers[(address - 0x4000) as usize];
@@ -338,6 +351,14 @@ impl CPU {
                 }
 
                 self.aio_registers[(address - 0x4000) as usize] = val;
+            },
+            0x4014 => {
+                let page = (val as u16) << 8;
+                for b in page .. page + 256 {
+                    let val = self.read(b);
+                    self.ppu.oam_dma_write(val);
+                }
+                self.counter -= 514;
             },
             0x4020 ... 0xFFFF | _ => {
                 let pre = self.cartridge.read(address);

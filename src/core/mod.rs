@@ -5,6 +5,7 @@ pub mod ppu;
 pub mod apu;
 pub mod constants;
 pub mod types;
+pub mod memory_bus;
 #[cfg(feature = "debug")]
 pub use super::debug::Debug;
 pub use self::cpu::EmuError;
