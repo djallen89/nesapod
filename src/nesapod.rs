@@ -7,8 +7,14 @@ use super::debug::Debug;
 #[cfg(feature = "debug")]
 pub struct Nesapod {
     debugger: Debug,
-    cpu: CPU,
+    cpu: CPU
 }
+
+#[cfg(not(feature = "debug"))]
+pub struct Nesapod {
+    cpu: CPU
+}
+
 
 #[cfg(feature = "debug")]
 impl Nesapod {
@@ -44,11 +50,6 @@ impl Nesapod {
 }
 
 #[cfg(not(feature = "debug"))]
-pub struct Nesapod {
-    cpu: CPU,
-}
-
-#[cfg(not(feature = "debug"))]
 impl Nesapod {
     pub fn new(rom: Option<String>, logging: bool) -> Nesapod {
         let romname = match rom {
@@ -81,9 +82,10 @@ impl Nesapod {
 
 pub fn main(rom: Option<String>, logging: bool) {
     let mut nesapod = Nesapod::new(rom, logging);
-    let help = "n @ 1 ... 9 => run n times
-H => 16, H => 100, K => 1000, T => 10,000,
-U => 100,000, => M = 1,000,000, G => 100,000,000
+    let help =
+        "n @ 1 ... 9 => run n times
+F => 16, H => 100, K => 1000, T => 10,000,
+U => 100,000, M = 1,000,000, G => 100,000,000
 q => quit
 h => print this message";
     loop {

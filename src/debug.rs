@@ -16,6 +16,7 @@ pub struct Debug {
     len_since_read: usize
 }
 
+//TODO: Separate Debugging from Logging
 pub fn default_log(logging: bool) -> Option<PathBuf> {
     if logging {
         let t = time::now();

@@ -7,6 +7,9 @@ use core::constants::{A, X, Y,
                       STACK_REGION,
                       IRQ_VECTOR, NMI_VECTOR, RESET_VECTOR,
                       POWERUP_S};
+use core::cpu::flags::StatusFlags;
+
+mod flags;
 
 #[derive(Debug)]
 pub enum EmuError {
@@ -16,47 +19,6 @@ pub enum EmuError {
 }
 
 pub type CPUResult<T> = Result<T, EmuError>;
-
-bitflags! {
-    struct StatusFlags: u8 {
-        const C = 0b0000_0001;
-        const Z = 0b0000_0010;
-        const I = 0b0000_0100;
-        const D = 0b0000_1000;
-        const B = 0b0001_0000;
-        const S = 0b0010_0000;
-        const V = 0b0100_0000;
-        const N = 0b1000_0000;
-    }
-}
-
-impl StatusFlags {
-    pub fn get_flag(&self, flag: StatusFlags) -> StatusFlags {
-        *self & flag
-    }
-
-    pub fn flag_position(flag: StatusFlags) -> u8 {
-        match flag {
-            StatusFlags::C => 0,
-            StatusFlags::Z => 1,
-            StatusFlags::I => 2,
-            StatusFlags::D => 3,
-            StatusFlags::B => 4,
-            StatusFlags::S => 5,
-            StatusFlags::V => 6,
-            StatusFlags::N => 7,
-            _ => panic!(format!("Flag position of {:?} doesn't make sense!", flag))
-        }
-    }
-
-    pub fn get_flag_bit(&self, flag: StatusFlags) -> u8 {
-        (*self & flag).bits
-    }
-    
-    pub fn status(&self, flag: StatusFlags) -> bool {
-        self.get_flag(flag) == flag
-    }
-}
 
 #[inline(always)]
 fn split(u: u16) -> (u8, u8) {
@@ -186,7 +148,7 @@ impl fmt::Display for CPU {
     #[cfg(not(feature = "debug"))]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let foo = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X} PC:{:04X}",
-                          self.axy[0], self.axy[1], self.axy[2], self.status_register.bits,
+                          self.axy[0], self.axy[1], self.axy[2], self.status_register.bits(),
                           self.stack_pointer, self.pc);
         write!(f, "{}", foo)
     }
@@ -212,7 +174,7 @@ impl CPU {
             last_instr: format!(""),
             last_registers: format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
                                     0, 0, 0,
-                                    (StatusFlags::I | StatusFlags::S).bits,
+                                    (StatusFlags::I | StatusFlags::S).bits(),
                                     POWERUP_S),
         })
     }
@@ -263,7 +225,7 @@ impl CPU {
     fn handle_nmi(&mut self) {
         let pc = self.pc + 1;
         self.stack_push_double(pc);
-        let flags = self.status_register.bits;
+        let flags = self.status_register.bits();
         self.stack_push(flags);
         self.status_register |= StatusFlags::I;
         self.pc = NMI_VECTOR;
@@ -273,7 +235,7 @@ impl CPU {
     fn handle_irq(&mut self) {
         let pc = self.pc + 1;
         self.stack_push_double(pc);
-        let flags = self.status_register.bits;
+        let flags = self.status_register.bits();
         self.status_register |= StatusFlags::I;
         self.stack_push(flags);
         self.pc = IRQ_VECTOR;
@@ -876,18 +838,20 @@ impl CPU {
             Code::PHP => {
                 self.counter -= min_cycles;
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                self.stack_push(flags.bits);
+                self.stack_push(flags.bits());
             },
 
             Code::PLP => {
                 self.counter -= min_cycles;
                 let flags = self.stack_pop() & 0b1110_1111;
-                self.status_register.bits = flags | 0b0010_0000;
+                //self.status_register.bits() = flags | 0b0010_0000;
+                self.status_register.set_flag_bit(flags | 0b0010_0000);
             },
             
             Code::RTI => {
                 let flags = self.stack_pop() & 0b1110_1111;
-                self.status_register.bits = flags | 0b0010_0000;
+                //self.status_register.bits() = flags | 0b0010_0000;
+                self.status_register.set_flag_bit(flags | 0b0010_0000);
                 let addr = self.stack_pop_double();
                 self.pc = addr;
                 self.counter -= min_cycles;
@@ -912,7 +876,7 @@ impl CPU {
                 self.pc = irq;
                     
                 let flags = self.status_register | StatusFlags::S | StatusFlags::B;
-                self.stack_push(flags.bits)
+                self.stack_push(flags.bits())
             },
 
             Code::NOP | Code::_NP  => { 
@@ -1186,7 +1150,7 @@ impl CPU {
     }
 
     fn adc(&self, rhs: u8) -> (u8, bool, bool) {
-        let carry = self.status_register.get_flag(StatusFlags::C).bits;
+        let carry = self.status_register.get_flag(StatusFlags::C).bits();
 
         let lhs = self.axy[A];
 
