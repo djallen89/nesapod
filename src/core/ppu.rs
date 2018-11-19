@@ -694,7 +694,12 @@ impl PPU {
                     self.internal_read(&mut 0x3F00, cart)
                 };
                 let img_idx = (self.scanline as usize) * 256 + (x as usize);
-                let rgb_idx = (rgb_idx % 64) as usize;
+                //self.image[img_idx] = NES_RGB[rgb_idx * 3];
+                //self.image[img_idx + 1] = NES_RGB[rgb_idx * 3 + 1];
+                //self.image[img_idx + 2] = NES_RGB[rgb_idx * 3 + 2];
+                //self.image[img_idx] = (self.scanline as u8, x as u8, 2 * (x as u8))
+                //
+                //let rgb_idx = (rgb_idx % 64) as usize;
             }
         }
         self.shift_bg_low <<= 1;

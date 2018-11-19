@@ -1,18 +1,13 @@
 use std::fs::File;
 use std::io::Bytes;
-use std::io::Error as IOError;
-use std::io::ErrorKind;
 use std::io::prelude::*;
 use std::str;
 use core::ines::mappers::Mapper;
-use core::EmuError;
 
 mod mappers; 
 
 const MIN_INES_SIZE: u64 = 16 + 16384 + 8192;
 const INES_MAGIC_CODE: [u8; 4] = [0x4E, 0x45, 0x53, 0x1A];
-
-type MMUResult<T> = Result<T, EmuError>;
 
 bitflags! {
     pub struct Flags6: u8 {
@@ -80,7 +75,7 @@ pub struct Header {
 
 /// prg_rom is number of 16384 byte tables, chr_rom/chr_ram is number of
 impl Header {
-    pub fn new(reader: &mut Bytes<File>) -> Result<Header, IOError> {
+    pub fn new(reader: &mut Bytes<File>) -> Result<Header, String> {
         let mut header = Header {
             prg_rom: 0,
             prg_ram: 0,
@@ -94,40 +89,74 @@ impl Header {
         
         let mut magic = [0u8; 4];
         for n in 0..4 {
-            magic[n] = reader.next().unwrap()?;
+            match reader.next() {
+                Some(x) => match x {
+                    Ok(r) => magic[n] = r,
+                    Err(f) => return Err(format!("{}", f))
+                },
+                None => return Err(format!("Unexpected end of file."))
+            }
         }
         
         if magic != INES_MAGIC_CODE {
-             return Err(IOError::new(
-                ErrorKind::Other, format!("Expected `NES' + MS-DOS EOF, got {:?}", magic)))
+             return Err(format!("Expected `NES' + MS-DOS EOF, got {:?}", magic))
         }
 
-        header.prg_rom = reader.next().unwrap()?;
-        match reader.next().unwrap()? {
+        header.prg_rom = match reader.next() {
+            Some(x) => match x {
+                Ok(r) => r,
+                Err(f) => return Err(format!("{}", f))
+            },
+            None => return Err(format!("Unexpected end of file."))
+        };
+
+        let next_byte = match reader.next().unwrap() {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{}", f))
+        };
+        
+        match next_byte {
             0 => header.chr_ram = 1,
             x => header.chr_rom = x
         };
         
-        header.flags_6 = reader.next().unwrap()?;
-        header.flags_7 = reader.next().unwrap()?;
-
-        header.prg_ram = match reader.next().unwrap()? {
-            0 => 1, //compatibility, see PRG RAM circuit
-            x => x 
+        header.flags_6 = match reader.next().unwrap() {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{}", f))
         };
         
-        header.flags_9 = reader.next().unwrap()?;
-        header.flags_10 = reader.next().unwrap()?;
+        header.flags_7 = match reader.next().unwrap() {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{}", f))
+        };
+
+        header.prg_ram = match reader.next().unwrap() {
+            Ok(0) => 1, //compatibility, see PRG RAM circuit
+            Ok(x) => x,
+            Err(f) => return Err(format!("{}", f))
+        };
+        
+        header.flags_9 = match reader.next().unwrap() {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{}", f))
+        };
+        
+        header.flags_10 = match reader.next().unwrap() {
+            Ok(x) => x,
+            Err(f) => return Err(format!("{}", f))
+        };
         
         let mut padding = [0u8; 5];
         for n in 0..5 {
-            padding[n] = reader.next().unwrap()?;
+            padding[n] = match reader.next().unwrap(){
+                Ok(x) => x,
+                Err(f) => return Err(format!("{}", f))
+            };
         }
 
         //discard 10flags
         if padding != [0, 0, 0, 0, 0] { 
-            Err(IOError::new(
-                ErrorKind::Other, format!("Expected 5 0 bytes, found {:?}", padding)))
+            Err(format!("Expected 5 0 bytes, found {:?}", padding))
         } else {
             Ok(header)
         }
@@ -209,22 +238,22 @@ impl INES {
         ram
     }
     
-    pub fn new(path: &str) -> MMUResult<INES> {
+    pub fn new(path: &str) -> Result<INES, String> {
         let file = match File::open(path) {
             Ok(x) => x,
-            Err(f) => return Err(EmuError::IOError(f))
+            Err(f) => return Err(format!("{}",f))
         };
         let metadata = match file.metadata() {
             Ok(x) => x,
-            Err(f) => return Err(EmuError::IOError(f))
+            Err(f) => return Err(format!("{}",f))
         };
         if metadata.len() < MIN_INES_SIZE {
-            return Err(EmuError::BadROM(format!("File is smaller than minimum possible size!")))
+            return Err(format!("File is smaller than minimum possible size!"))
         }
         let mut filebytes = file.bytes();
         let header = match Header::new(&mut filebytes) {
             Ok(x) => x,
-            Err(f) => return Err(EmuError::IOError(f))
+            Err(f) => return Err(format!("{}",f))
         };
         let prg_rom = header.fill_mem(header.prg_rom_size(), &mut filebytes);
         let chr_mem = match (header.chr_rom, header.chr_ram) {

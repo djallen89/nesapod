@@ -1,55 +1,11 @@
 use std::io;
-use core::cpu::CPU;
+use core::NESCore;
 use core::ines::INES;
-#[cfg(feature = "debug")]
-use super::debug::Debug;
 
-#[cfg(feature = "debug")]
-pub struct Nesapod {
-    debugger: Debug,
-    cpu: CPU
+struct Nesapod {
+    core: NESCore
 }
 
-#[cfg(not(feature = "debug"))]
-pub struct Nesapod {
-    cpu: CPU
-}
-
-
-#[cfg(feature = "debug")]
-impl Nesapod {
-    pub fn new(rom: Option<String>, logging: bool) -> Nesapod {
-        let romname = match rom {
-            Some(r) => r,
-            None => format!("assets/instr_test-v5/official_only.nes")
-        };
-        
-        let ines = match INES::new(&romname) {
-            Ok(r) => r,
-            Err(f) => panic!(f)
-        };
-
-        let cpu = match CPU::power_up(ines) {
-            Ok(r) => r,
-            Err(f) => panic!(f)
-        };
-
-        Nesapod {
-            debugger: Debug::new(32, logging),
-            cpu: cpu,
-        }
-    }
-
-    pub fn run(&mut self, n: usize) {
-        for s in 0 .. n {
-            self.cpu.exec();
-            self.debugger.input(&format!("{}", self.cpu));
-        }
-        self.debugger.print();
-    }
-}
-
-#[cfg(not(feature = "debug"))]
 impl Nesapod {
     pub fn new(rom: Option<String>, logging: bool) -> Nesapod {
         let romname = match rom {
@@ -62,21 +18,15 @@ impl Nesapod {
             Err(f) => panic!(f)
         };
 
-        let cpu = match CPU::power_up(ines) {
-            Ok(r) => r,
-            Err(f) => panic!(f)
-        };
+        let core = NESCore::power_up(ines);
 
         Nesapod {
-            cpu: cpu,
+            core: core,
         }
     }
 
-    
-    pub fn run(&mut self, n: usize) {
-        for s in 0 .. n {
-            self.cpu.exec();
-        }
+    pub fn run(&self, n: usize) {
+        println!("{}", n);
     }
 }
 
@@ -102,7 +52,7 @@ h => print this message";
         
         match input.trim() {
             "h" => println!("{}", help),
-            "d" => println!("{}", nesapod.cpu.dump_ram()),
+            //"d" => println!("{}", nesapod.cpu.dump_ram()),
             "q" => break,
             "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => {
                 let n = input.trim().parse::<usize>().unwrap();
@@ -119,5 +69,4 @@ h => print this message";
         }
     }
 }
-
 
