@@ -58,7 +58,7 @@ pub struct CPU {
 
 impl fmt::Display for CPU {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let foo = format!("PC: {:X}, P: {}, A: {}, X: {}, Y: {}, SP: {}",
+        let foo = format!("PC: {:04X}, P: {:08b}, A: {:02X}, X: {:02X}, Y: {:02X}, SP: {:02X}",
                           combine_bytes(self.pcl, self.pch),
                           self.flags_as_byte(),
                           self.acc,
@@ -86,22 +86,22 @@ impl<'a> CPU {
             acc: 0,
             xir: 0,
             yir: 0,
-            sp: POWERUP_SP,
+            sp: 0//POWERUP_SP,
         }
     }
     
-    pub fn reset(&mut self) {
-        self.sp -= 3;
-        let (pcl, pch) = split(RES_VECTOR);
-        self.pcl = pcl;
-        self.pch = pch;
+    pub fn reset(&mut self, membox: &mut Memory) {
+        self.sp = self.sp.wrapping_sub(3);// -= 3;
+        //let (pcl_s, pch_s) = split(RES_VECTOR);
+        self.pcl = membox.read(RES_VECTOR);
+        self.pch = membox.read(RES_VECTOR + 1);
         self.flag_i = true;
     }
 
     pub fn increment_pc(&mut self) {
-        self.pcl.wrapping_add(1);
+        self.pcl = self.pcl.wrapping_add(1);
         if self.pcl == 0 {
-            self.pch.wrapping_add(1);
+            self.pch = self.pch.wrapping_add(1);
         }
     }
 
@@ -156,6 +156,7 @@ impl<'a> CPU {
         membox.cpu_ram[addr as usize] = val;
         let new_sp = self.sp.wrapping_sub(1);
         self.sp = new_sp;
+        self.print_stack(membox);
     }
 
     fn stack_pop(&mut self, membox: &Memory) -> u8 {
@@ -163,6 +164,7 @@ impl<'a> CPU {
         let addr = (new_sp as u16)  + STACK_PAGE;
         self.sp = new_sp;
         let val = membox.cpu_ram[addr as usize];
+        self.print_stack(membox);
         val
     }
 
@@ -171,15 +173,32 @@ impl<'a> CPU {
         membox.cpu_ram[addr as usize] = self.pch;
         membox.cpu_ram[(addr as usize).wrapping_sub(1)] = self.pcl;
         let new_sp = self.sp.wrapping_sub(2);
+        self.print_stack(membox);
         self.sp = new_sp;
     }
 
     fn stack_pop_pc(&mut self, membox: &mut Memory) {
         let addr = (self.sp as u16) + STACK_PAGE;
-        self.pcl = membox.cpu_ram[(addr as usize)];
-        self.pch = membox.cpu_ram[(addr as usize).wrapping_add(1)];
+        self.pcl = membox.cpu_ram[(addr as usize).wrapping_add(1)];
+        self.pch = membox.cpu_ram[(addr as usize).wrapping_add(2)];
         let new_sp = self.sp.wrapping_add(2);
+        self.print_stack(membox);
         self.sp = new_sp;
+    }
+
+    pub fn print_stack(&self, membox: &Memory) {
+        print!("    ");
+        for n in 0 .. 16 {
+            print!("{:02X} ", n);
+        }
+        println!("");
+        for n in 0 .. 16 {
+            print!("{:02X}: ", n);
+            for m in 0 .. 16 {
+                print!("{:02X} ", membox.cpu_ram[n * 16 + m + 0x0100])
+            }
+            println!("");
+        }
     }
 
     fn interrupt(&mut self, membox: &mut Memory, vector: u16) {
@@ -199,6 +218,7 @@ impl<'a> CPU {
         }
         
         let opcode = self.read_pc(membox);
+        println!("Opcode: {:02X}", opcode);
         match opcode {
             0x00 => brk_imp(self, membox),
             0x01 => ora_ixi(self, membox),
@@ -292,7 +312,6 @@ impl<'a> CPU {
             
             0x90 => bcc_rel(self, membox),
             0x91 => sta_iyi(self, membox),
-            0x92 => ldx_imm(self, membox),
             0x94 => sty_zpx(self, membox),
             0x95 => sta_zpx(self, membox),
             0x96 => stx_zpy(self, membox),
@@ -303,6 +322,7 @@ impl<'a> CPU {
             
             0xA0 => ldy_imm(self, membox),
             0xA1 => lda_ixi(self, membox),
+            0xA2 => ldx_imm(self, membox),
             0xA4 => ldy_zpg(self, membox),
             0xA5 => lda_zpg(self, membox),
             0xA6 => ldx_zpg(self, membox),
@@ -366,6 +386,5 @@ impl<'a> CPU {
             0xFE => inc_abx(self, membox),
             _ => hlt_imp(self, membox),
         }
-        println!("{}", self.pcl);
     }
 }

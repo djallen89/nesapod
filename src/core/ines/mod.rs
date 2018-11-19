@@ -293,14 +293,17 @@ impl INES {
     }
 
     pub fn read(&self, idx: u16) -> u8 {
+        println!("Premapped address: {:04X}", idx);
         match self.mapper {
             Mapper::NROM => {
                 match idx {
                     0x0000 ... 0x5FFF => panic!(format!("Can't read {:04X}; not on cartridge",
                                                         idx)),
                     0x6000 ... 0x7FFF => self.prg_ram[(idx - 0x6000) as usize],
-                    0x8000 ... 0xFFFF => self.prg_rom[((idx - 0x8000) as usize)
-                                                      % self.prg_rom_size],
+                    0x8000 ... 0xFFFF => {
+                        self.prg_rom[((idx - 0x8000) as usize)
+                                     % self.prg_rom_size]
+                    }
                     _ => panic!("This should not happen with u16")
                 }
             },
@@ -312,9 +315,14 @@ impl INES {
                         self.prg_rom[(idx as usize) % self.prg_rom_size]
                         //panic!(format!("Can't read {:04X}; not mapped on MMC1", idx)),
                     },
-                    0x6000 ... 0x7FFF => self.prg_ram[(idx - 0x6000) as usize],
+                    0x6000 ... 0x7FFF => {
+                        println!("Effective address: {:04X}", ((idx - 0x6000) as usize));
+                        self.prg_ram[(idx - 0x6000) as usize]
+                    }
                     _ => {
                         let addr = sxrom.prg_read(idx) - 0x8000;
+                        let eff_addr = addr % self.prg_rom_size;
+                        println!("Effective address: {:04X}", eff_addr);
                         self.prg_rom[addr % self.prg_rom_size]
                     }
                 }

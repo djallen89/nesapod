@@ -25,19 +25,42 @@ impl Nesapod {
         }
     }
 
-    pub fn run(&self, n: usize) {
-        println!("{}", n);
+    pub fn run(&mut self, n: usize) {
+        for _ in 0 .. n {
+            self.core.step()
+        }
+    }
+
+    pub fn check_ram(&self) -> String {
+        self.core.check_ram()
+    }
+
+    pub fn print_stack(&mut self) {
+        self.core.print_stack();
+    }
+
+    pub fn print_cpu(&self) {
+        self.core.print_cpu()
+    }
+
+    pub fn reset(&mut self) {
+        self.core.reset()
     }
 }
 
 pub fn main(rom: Option<String>, logging: bool) {
     let mut nesapod = Nesapod::new(rom, logging);
+    nesapod.reset();
     let help =
         "n @ 1 ... 9 => run n times
+d => Print status of debug rom
+p => Print registers
+S => Print stack
 F => 16, H => 100, K => 1000, T => 10,000,
 U => 100,000, M = 1,000,000, G => 100,000,000
-q => quit
-h => print this message";
+q => Quit
+h => Print this message";
+    println!("{}", help);
     loop {
         let mut input = String::new();
         match io::stdin().read_line(&mut input) {
@@ -52,9 +75,20 @@ h => print this message";
         
         match input.trim() {
             "h" => println!("{}", help),
-            //"d" => println!("{}", nesapod.cpu.dump_ram()),
+            "d" => println!("{}", nesapod.check_ram()),
+            "p" => nesapod.print_cpu(),
+            "r" => nesapod.reset(),
+            "S" => nesapod.print_stack(),
             "q" => break,
-            "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9" => {
+            "1" |
+            "2" |
+            "3" |
+            "4" |
+            "5" |
+            "6" |
+            "7" |
+            "8" |
+            "9" => {
                 let n = input.trim().parse::<usize>().unwrap();
                 nesapod.run(n);
             },

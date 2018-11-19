@@ -5,3 +5,4 @@ Cargo.lock
 .#*
 *.log
 *.*~
+/assets/stripped/

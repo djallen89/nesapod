@@ -94,4 +94,37 @@ impl NESCore {
             cart: cart
         }
     }
+
+    pub fn reset(&mut self) {
+        self.ppu.reset();
+        let mut mem = Memory::new(&mut self.cpu_ram,
+                                  &mut self.io_regs,
+                                  &mut self.ppu,
+                                  &mut self.cart);
+        self.cpu.reset(&mut mem);
+    }
+
+    pub fn check_ram(&self) -> String {
+        self.cart.dump_ram()
+    }
+
+    pub fn print_cpu(&self) {
+        println!("{}", self.cpu)
+    }
+
+    pub fn print_stack(&mut self) {
+        let mem = Memory::new(&mut self.cpu_ram,
+                              &mut self.io_regs,
+                              &mut self.ppu,
+                              &mut self.cart);
+        self.cpu.print_stack(&mem);
+    }
+
+    pub fn step(&mut self) {
+        let mut mem = Memory::new(&mut self.cpu_ram,
+                                  &mut self.io_regs,
+                                  &mut self.ppu,
+                                  &mut self.cart);
+        self.cpu.exec(&mut mem, Interrupt::Nil)
+    }
 }

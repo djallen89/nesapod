@@ -372,7 +372,7 @@ impl PPU {
         }
     }
 
-    fn reset(&mut self) {
+    pub fn reset(&mut self) {
         self.odd_frame = false;
         self.scanline = 0;
         self.dot = 0;
@@ -429,7 +429,7 @@ impl PPU {
             1 => self.ppu_mask.bits = val,
             3 => self.oam_addr = val,
             4 => {
-                self.oam_addr += 1;
+                self.oam_addr = self.oam_addr.wrapping_add(1);
                 self.oam_ram[self.oam_addr as usize];
                 //self.oam_data = val;
             },

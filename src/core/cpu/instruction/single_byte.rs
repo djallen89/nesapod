@@ -32,28 +32,28 @@ pub fn clv_imp(cpu: &mut CPU, _membox: &mut Memory) {
 
 
 pub fn dex_imp(cpu: &mut CPU, _membox: &mut Memory) {
-    cpu.xir -= 1;
+    cpu.xir = cpu.xir.wrapping_sub(1);
     let res = cpu.xir;
     cpu.set_zn(res);
 }
 
 
 pub fn dey_imp(cpu: &mut CPU, _membox: &mut Memory) {
-    cpu.yir -= 1;
+    cpu.yir = cpu.yir.wrapping_sub(1);
     let res = cpu.yir;
     cpu.set_zn(res);
 }
 
 
 pub fn inx_imp(cpu: &mut CPU, _membox: &mut Memory) {
-    cpu.xir += 1;
+    cpu.xir = cpu.xir.wrapping_add(1);
     let res = cpu.xir;
     cpu.set_zn(res);
 }
 
 
 pub fn iny_imp(cpu: &mut CPU, _membox: &mut Memory) {
-    cpu.yir += 1;
+    cpu.yir = cpu.yir.wrapping_add(1);
     let res = cpu.yir;
     cpu.set_zn(res);
 }
