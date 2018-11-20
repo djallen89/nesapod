@@ -13,8 +13,10 @@ pub use self::internal::*;
 pub use self::store::*;
 pub use self::rmw::*;
 
-pub fn hlt_imp(_cpu: &mut CPU, _membox: &mut Memory) {
-    panic!("Illegal instruction!");
+pub fn hlt_imp(cpu: &mut CPU, membox: &mut Memory) {
+    cpu.decrement_pc();
+    let opcode = cpu.read_pc(membox);
+    panic!(format!("Illegal instruction: {:02X}", opcode));
 }
 
 pub fn php_imp(cpu: &mut CPU, membox: &mut Memory) {
@@ -46,6 +48,8 @@ pub fn jsr_imp(cpu: &mut CPU, membox: &mut Memory) {
 }
 
 pub fn brk_imp(cpu: &mut CPU, membox: &mut Memory) {
+    cpu.increment_pc();
+    cpu.flag_s = true;
     cpu.interrupt(membox, IRQ_VECTOR);
 }
 

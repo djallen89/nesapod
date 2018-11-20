@@ -289,11 +289,10 @@ impl INES {
             .take_while(|&x| *x != 0 )
             .map(|&x| x as char)
             .collect();
-        format!("\n{:02X} {:02X} {:02X} {:02X}: {}\n", status0, status1, status2, status3, msg)
+        format!("\n{:02X} {:02X} {:02X} {:02X}:\n{}\n", status0, status1, status2, status3, msg)
     }
 
     pub fn read(&self, idx: u16) -> u8 {
-        println!("Premapped address: {:04X}", idx);
         match self.mapper {
             Mapper::NROM => {
                 match idx {
@@ -316,13 +315,11 @@ impl INES {
                         //panic!(format!("Can't read {:04X}; not mapped on MMC1", idx)),
                     },
                     0x6000 ... 0x7FFF => {
-                        println!("Effective address: {:04X}", ((idx - 0x6000) as usize));
                         self.prg_ram[(idx - 0x6000) as usize]
                     }
                     _ => {
                         let addr = sxrom.prg_read(idx) - 0x8000;
                         let eff_addr = addr % self.prg_rom_size;
-                        println!("Effective address: {:04X}", eff_addr);
                         self.prg_rom[addr % self.prg_rom_size]
                     }
                 }
@@ -346,7 +343,10 @@ impl INES {
                 match idx {
                     0x0000 ... 0x5FFF => panic!(format!("Can't write to {:04X}; not on cartridge", idx)),
                     0x6000 ... 0x7FFF => self.prg_ram[(idx - 0x6000) as usize] = val,
-                    0x7FFF ... 0xFFFF => panic!(format!("Can't write to {:04X}!", idx)),
+                    0x7FFF ... 0xFFFF => {
+                        
+                        //panic!(format!("Can't write to {:04X}!", idx));
+                    }
                     _ => panic!("This should not happen with u16")
                 }
             },

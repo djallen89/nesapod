@@ -127,4 +127,13 @@ impl NESCore {
                                   &mut self.cart);
         self.cpu.exec(&mut mem, Interrupt::Nil)
     }
+
+    pub fn set_pc(&mut self, n: u16) {
+        self.cpu.pcl = (n & 0x00FF) as u8;
+        self.cpu.pch = ((n & 0xFF00) >> 8) as u8;
+    }
+
+    pub fn nestest_check(&self) {
+        println!("{}{}", self.cpu_ram[2], self.cpu_ram[3]);
+    }
 }

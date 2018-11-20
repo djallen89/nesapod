@@ -200,6 +200,13 @@ pub fn cmp_abs(cpu: &mut CPU, membox: &mut Memory) {
 }
 
 #[inline(always)]
+pub fn cpx_abs(cpu: &mut CPU, membox: &mut Memory) {
+    let lhs = cpu.xir;
+    let rhs = abs_read(cpu, membox);
+    compare(cpu, lhs, rhs);
+}
+    
+#[inline(always)]
 pub fn cpy_abs(cpu: &mut CPU, membox: &mut Memory) {
     let lhs = cpu.yir;
     let rhs = abs_read(cpu, membox);

@@ -1,3 +1,4 @@
+use std::u16;
 use std::io;
 use core::NESCore;
 use core::ines::INES;
@@ -31,6 +32,14 @@ impl Nesapod {
         }
     }
 
+    pub fn set_pc(&mut self, n: u16) {
+        self.core.set_pc(n);
+    }
+
+    pub fn nestest_check(&self) {
+        self.core.nestest_check()
+    }
+
     pub fn check_ram(&self) -> String {
         self.core.check_ram()
     }
@@ -53,6 +62,8 @@ pub fn main(rom: Option<String>, logging: bool) {
     nesapod.reset();
     let help =
         "n @ 1 ... 9 => run n times
+N# => Run # times (e.g. N3210 runs 3,210 times)
+D => Print debug status at 0x0002 and 0x0003
 d => Print status of debug rom
 p => Print registers
 S => Print stack
@@ -76,6 +87,7 @@ h => Print this message";
         match input.trim() {
             "h" => println!("{}", help),
             "d" => println!("{}", nesapod.check_ram()),
+            "D" => nesapod.nestest_check(),
             "p" => nesapod.print_cpu(),
             "r" => nesapod.reset(),
             "S" => nesapod.print_stack(),
@@ -99,8 +111,21 @@ h => Print this message";
             "U" => nesapod.run(100000),
             "M" => nesapod.run(1000000),
             "G" => nesapod.run(100000000),
-            _ => {}
+            x => {
+                if x.len() > 1 && &x[0..1] == "N" {
+                    let rest = &x[1..].trim().parse::<usize>();
+                    match rest {
+                        Ok(n) => nesapod.run(*n),
+                        Err(f) => println!("{}", f)
+                    }
+                } else if x.len() > 2 && &x[0..2] == "PC" {
+                    let rest = u16::from_str_radix(&x[2..].trim(), 16);
+                    match rest {
+                        Ok(n) => nesapod.set_pc(n),
+                        Err(f) => println!("{}", f)
+                    }
+                } 
+            }
         }
     }
 }
-
