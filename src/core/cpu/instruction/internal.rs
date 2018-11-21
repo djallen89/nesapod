@@ -485,6 +485,19 @@ pub fn lda_iyi(cpu: &mut CPU, membox: &mut Memory) {
     cpu.acc = rhs;
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
+    let base_addr = cpu.read_pc(membox);
+    let eff_addr = base_addr.wrapping_add(cpu.yir);
+    let rhs = membox.cpu_ram[eff_addr as usize];
+    cpu.last_eff_addr = eff_addr as u16;
+    cpu.last_val = rhs;
+    cpu.set_zn(rhs);
+    cpu.yir = rhs;
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
     let base_addr = cpu.read_pc(membox);
@@ -494,6 +507,21 @@ pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
     cpu.yir = rhs;
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn adc_internal(cpu: &mut CPU, rhs: u8) {
+    let carry = cpu.flag_c as u8;
+    let lhs = cpu.acc;
+    let next_carry = (rhs == 255 && cpu.flag_c) || u8::MAX - rhs - carry < lhs;
+    let result = lhs.wrapping_add(rhs.wrapping_add(carry));
+    let overflow = ((!(lhs ^ rhs) & 0b1000_0000) == 0b1000_0000) &&
+        ((lhs ^ result) & 0b1000_0000) == 0b1000_0000;
+    cpu.set_cznv(result, next_carry, overflow);
+    cpu.acc = result;
+    cpu.last_val = rhs;
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn adc_internal(cpu: &mut CPU, rhs: u8) {
     let carry = cpu.flag_c as u8;
@@ -506,6 +534,16 @@ pub fn adc_internal(cpu: &mut CPU, rhs: u8) {
     cpu.acc = result;
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn compare(cpu: &mut CPU, lhs: u8, rhs: u8) {
+    let result = lhs.wrapping_sub(rhs);
+    let carry = lhs >= rhs;
+    cpu.set_czn(result, carry);
+    cpu.last_val = rhs;
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn compare(cpu: &mut CPU, lhs: u8, rhs: u8) {
     let result = lhs.wrapping_sub(rhs);
@@ -513,6 +551,16 @@ pub fn compare(cpu: &mut CPU, lhs: u8, rhs: u8) {
     cpu.set_czn(result, carry);
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn logical(cpu: &mut CPU, rhs: u8, op: &Fn(u8, u8) -> u8) {
+    let result = op(cpu.acc, rhs);
+    cpu.set_zn(result);
+    cpu.acc = result;
+    cpu.last_val = rhs;
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn logical(cpu: &mut CPU, rhs: u8, op: &Fn(u8, u8) -> u8) {
     let result = op(cpu.acc, rhs);
@@ -533,6 +581,16 @@ pub fn zpg_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     membox.cpu_ram[eff_addr as usize]
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn load_zpg(cpu: &mut CPU, membox: &mut Memory) -> u8 {
+    let rhs = zpg_read(cpu, membox);
+    cpu.last_val = rhs;
+    cpu.set_zn(rhs);
+    rhs
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn load_zpg(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let rhs = zpg_read(cpu, membox);
@@ -540,8 +598,19 @@ pub fn load_zpg(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     rhs
 }
 
+#[cfg(feature = "debug")]
 #[inline(always)]
-pub fn two_byte_read(membox: &mut Memory, adl: u8, adh: u8) -> u8 {
+pub fn two_byte_read(cpu: &mut CPU, membox: &mut Memory, adl: u8, adh: u8) -> u8 {
+    let eff_addr = combine_bytes(adl, adh);
+    let val = membox.read(eff_addr);
+    cpu.last_eff_addr = eff_addr;
+    cpu.last_val = val;
+    val
+}
+
+#[cfg(not(feature = "debug"))]
+#[inline(always)]
+pub fn two_byte_read(_cpu: &mut CPU, membox: &mut Memory, adl: u8, adh: u8) -> u8 {
     let eff_addr = combine_bytes(adl, adh);
     membox.read(eff_addr)
 }
@@ -549,7 +618,7 @@ pub fn two_byte_read(membox: &mut Memory, adl: u8, adh: u8) -> u8 {
 #[inline(always)]
 pub fn abs_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let (adl, adh) = read_two_bytes(cpu, membox);
-    two_byte_read(membox, adl, adh)
+    two_byte_read(cpu, membox, adl, adh)
 }
 
 
@@ -570,6 +639,16 @@ pub fn bit(cpu: &mut CPU, val: u8) {
     cpu.flag_v = (val & FLAG_V) == FLAG_V;
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn load_abs(cpu: &mut CPU, membox: &mut Memory) -> u8 {
+    let rhs = abs_read(cpu, membox);
+    cpu.last_val = rhs;
+    cpu.set_zn(rhs);
+    rhs
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn load_abs(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let rhs = abs_read(cpu, membox);
@@ -583,7 +662,7 @@ pub fn ixi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     base_addr = base_addr.wrapping_add(cpu.xir);
     let adl = membox.cpu_ram[base_addr as usize];
     let adh = membox.cpu_ram[base_addr.wrapping_add(1) as usize];
-    two_byte_read(membox, adl, adh)
+    two_byte_read(cpu, membox, adl, adh)
 }
 
 #[inline(always)]
@@ -596,10 +675,22 @@ pub fn ab_ir_read(cpu: &mut CPU, membox: &mut Memory, ireg: u8) -> u8 {
     } else {
         0
     };
-    let adh = base_addr_hi + c;
-    two_byte_read(membox, adl, adh)
+    let adh = base_addr_hi.wrapping_add(c);
+    two_byte_read(cpu, membox, adl, adh)
 }
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn zpx_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
+    let base_addr = read_one_byte(cpu, membox);
+    let eff_addr = base_addr.wrapping_add(cpu.xir);
+    cpu.last_eff_addr = eff_addr as u16;
+    let val = membox.cpu_ram[eff_addr as usize];
+    cpu.last_val = val;
+    val
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn zpx_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let base_addr = read_one_byte(cpu, membox);
@@ -620,6 +711,6 @@ pub fn iyi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
         0
     };
     let adh = base_addr_hi.wrapping_add(c);
-    two_byte_read(membox, adl, adh)
+    two_byte_read(cpu, membox, adl, adh)
 }
 

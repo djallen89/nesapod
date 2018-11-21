@@ -65,7 +65,6 @@ fn rmw_zpg(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let data = membox.cpu_ram[adl as usize];
     cpu.last_eff_addr = adl as u16;
     cpu.last_val = data;
-    //cpu.msg = format!("${:04X} = #${:02X}", adl as u16, data);
     membox.cpu_ram[adl as usize] = op(cpu, data);
 }
 

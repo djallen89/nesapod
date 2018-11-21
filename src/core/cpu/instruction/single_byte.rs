@@ -4,7 +4,7 @@ use super::super::CPU;
 use super::super::super::Memory;
 
 pub fn asl_acc(cpu: &mut CPU, _membox: &mut Memory) {
-    let carry = cpu.acc < 127;
+    let carry = cpu.acc > 127;
     cpu.acc <<= 1;
     let res = cpu.acc;
     cpu.set_czn(res, carry);
@@ -52,7 +52,7 @@ pub fn iny_imp(cpu: &mut CPU, _membox: &mut Memory) {
 
 pub fn lsr_acc(cpu: &mut CPU, _membox: &mut Memory) {
     let carry = (cpu.acc & 0b0000_0001) == 0b0000_0001;
-    cpu.acc <<= 1;
+    cpu.acc >>= 1;
     let res = cpu.acc;
     cpu.set_czn(res, carry);
 }
@@ -65,6 +65,7 @@ pub fn rol_acc(cpu: &mut CPU, _membox: &mut Memory) {
     let old_carry = cpu.flag_c as u8;
     let next_carry = (cpu.acc & 0b1000_0000) == 0b1000_0000;
     let res = (cpu.acc << 1) | old_carry;
+    cpu.acc = res;
     cpu.set_czn(res, next_carry);
 }
 
@@ -72,6 +73,7 @@ pub fn ror_acc(cpu: &mut CPU, _membox: &mut Memory) {
     let old_carry = cpu.flag_c as u8;
     let next_carry = (cpu.acc & 0b0000_0001) == 0b0000_0001;
     let res = (cpu.acc >> 1) | (old_carry << 7);
+    cpu.acc = res;
     cpu.set_czn(res, next_carry);
 }
 

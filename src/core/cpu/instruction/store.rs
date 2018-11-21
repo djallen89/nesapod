@@ -95,9 +95,11 @@ pub fn sty_abs(cpu: &mut CPU, membox: &mut Memory) {
 
 /* STA ixi  --- ---  --- ---  */
 pub fn sta_ixi(cpu: &mut CPU, membox: &mut Memory) {
-    let bal = read_one_byte(cpu, membox);
-    let adl = bal.wrapping_add(cpu.xir);
-    let adh = bal.wrapping_add(cpu.xir).wrapping_add(1);
+    let mut bal = read_one_byte(cpu, membox);
+    bal = bal.wrapping_add(cpu.xir);
+    let adl = membox.read(bal as u16);
+    bal = bal.wrapping_add(1);
+    let adh = membox.read(bal as u16);
     let val = cpu.acc;
     two_byte_write(cpu, membox, adl, adh, val);
 }

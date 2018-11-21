@@ -48,9 +48,8 @@ pub fn read_two_bytes(cpu: &mut CPU, membox: &mut Memory) -> (u8, u8) {
 }
 
 pub fn hlt_imp(cpu: &mut CPU, membox: &mut Memory) {
-    cpu.decrement_pc();
-    let opcode = cpu.read_pc(membox);
-    panic!(format!("Illegal instruction: {:02X}", opcode));
+    panic!(format!("Illegal instruction: {:02X}", cpu.last_op));
+    //cpu.increment_pc();
 }
 
 pub fn php_imp(cpu: &mut CPU, membox: &mut Memory) {
@@ -64,12 +63,13 @@ pub fn pha_imp(cpu: &mut CPU, membox: &mut Memory) {
 }
 
 pub fn plp_imp(cpu: &mut CPU, membox: &mut Memory) {
-    let flags = cpu.stack_pop(membox);
+    let flags = cpu.stack_pop(membox) & !FLAG_B;
     cpu.set_flags(flags);
 }
 
 pub fn pla_imp(cpu: &mut CPU, membox: &mut Memory) {
     let acc = cpu.stack_pop(membox);
+    cpu.set_zn(acc);
     cpu.acc = acc;
 }
 
@@ -126,9 +126,8 @@ pub fn jmp_ind(cpu: &mut CPU, membox: &mut Memory) {
     cpu.byte_1 = ial;
     let iah = cpu.read_pc(membox);
     cpu.byte_2 = iah;
-    let addr = combine_bytes(ial, iah);
-    let adl = membox.read(addr);
-    let adh = membox.read(addr + 1);
+    let adl = membox.read(combine_bytes(ial, iah));
+    let adh = membox.read(combine_bytes(ial.wrapping_add(1), iah));
     cpu.pcl = adl;
     cpu.pch = adh;
 }
@@ -137,9 +136,8 @@ pub fn jmp_ind(cpu: &mut CPU, membox: &mut Memory) {
 pub fn jmp_ind(cpu: &mut CPU, membox: &mut Memory) {
     let ial = cpu.read_pc(membox);
     let iah = cpu.read_pc(membox);
-    let addr = combine_bytes(ial, iah);
-    let adl = membox.read(addr);
-    let adh = membox.read(addr + 1);
+    let adl = membox.read(combine_bytes(ial, iah));
+    let adh = membox.read(combine_bytes(ial.wrapping_add(1), iah));
     cpu.pcl = adl;
     cpu.pch = adh;
 }

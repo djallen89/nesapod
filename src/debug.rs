@@ -39,10 +39,10 @@ pub fn default_log(logging: bool) -> Option<PathBuf> {
 }
 
 impl Debug {
-    pub fn new(cap: usize, logging: bool) -> Debug {
+    pub fn new(_cap: usize, logging: bool) -> Debug {
         Debug {
-            disp_length: cap,
-            max_length: 1024,
+            disp_length: 1,
+            max_length: 56,
             logname: default_log(logging),
             messages: VecDeque::with_capacity(1024),
             len_since_read: 0,

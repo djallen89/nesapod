@@ -180,25 +180,34 @@ pub fn print_instr(cpu:&CPU) -> String {
     let instr = OPCODE_TABLE[idx];
 
     let mut msg = match addr {
-        IMP | ACC | HLT => format!(""),
+        ACC => format!(" A"),
+        IMP | HLT => format!(""),
         IMD => format!(" #${:02X}", cpu.byte_1),
-        IYI => format!(" (${:02X}),Y @ ${:04X}",
+        IND => format!(" (${:02X}{:02X}) = {:02X}{:02X}",
+                       cpu.byte_2,
                        cpu.byte_1,
+                       cpu.pch,
+                       cpu.pcl
+        ),
+        IYI => format!(" (${:02X}),Y = {:04X} @ {:04X}",
+                       cpu.byte_1,
+                       cpu.last_eff_addr.wrapping_sub(cpu.yir as u16),
                        cpu.last_eff_addr
         ),
-        IXI => format!(" (${:02X},X) @ ${:04X}",
+        IXI => format!(" (${:02X},X) @ {:02X} = {:04X}",
                        cpu.byte_1,
-                       cpu.last_eff_addr,
+                       cpu.byte_1.wrapping_add(cpu.xir),
+                       cpu.last_eff_addr
         ),
         ABS => format!(" ${:02X}{:02X}", cpu.byte_2, cpu.byte_1),
-        ABX | ABY => format!(" ${:02X}{:02X},{} @ ${:04X}",
+        ABX | ABY => format!(" ${:02X}{:02X},{} @ {:04X}",
                              cpu.byte_2,
                              cpu.byte_1,
                              if addr == ABX { "X" } else { "Y" },
                              cpu.last_eff_addr
         ),
-        ZPG => format!(" $00{:02X}", cpu.byte_1),
-        ZPX | ZPY => format!(" ${:02X},{} @ ${:04X}",
+        ZPG => format!(" ${:02X}", cpu.byte_1),
+        ZPX | ZPY => format!(" ${:02X},{} @ {:02X}",
                              cpu.byte_1,
                              if addr == ZPX { "X" } else { "Y" },
                              cpu.last_eff_addr
@@ -209,14 +218,23 @@ pub fn print_instr(cpu:&CPU) -> String {
 
     match instr {
         STA | STX | STY |
-        BIT => msg.push_str(&format!(" = #${:02X}", cpu.last_val)),
+        BIT => msg.push_str(&format!(" = {:02X}", cpu.last_val)),
         INC | DEC |
         ASL | LSR |
         ROL | ROR => if addr != ACC {
-            msg.push_str(&format!(" = #${:02X}", cpu.last_val))
+            msg.push_str(&format!(" = {:02X}", cpu.last_val))
+        },
+        SBC => if addr != IMD {
+            msg.push_str(&format!(" = {:02X}", !cpu.last_val))
+        }
+        ADC |
+        LDA | LDX | LDY |
+        ORA | EOR | AND |
+        CMP | CPX | CPY   => if addr != IMD {
+            msg.push_str(&format!(" = {:02X}", cpu.last_val))
         },
         _ => {}
     }
 
-    format!("${:04X}:{:02X}{}{}{}{}", cpu.last_pc, idx, bytes, spaces, instr, msg)
+    format!("{:04X}  {:02X}{}{}{}{}", cpu.last_pc, idx, bytes, spaces, instr, msg)
 }

@@ -2,7 +2,7 @@ mod instruction;
 #[cfg(feature = "debug")]
 mod code;
 
-use std::{u8, u16, fmt};
+use std::{u8, u16, fmt, iter};
 use self::instruction::*;
 use super::Interrupt;
 use super::Memory;
@@ -96,8 +96,15 @@ impl fmt::Display for CPU {
     #[cfg(feature = "debug")]
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let instr_msg = code::print_instr(self);
-
-        write!(f, "{}{}", self.last_regs, instr_msg)
+        let spaces: String = iter::repeat(" ")
+            .take(48 - instr_msg.len())
+            .collect();
+                  
+        write!(f, "{b}{c}{a}",
+               a = self.last_regs,
+               b = instr_msg,
+               c = spaces
+        )
     }
 
     #[cfg(not(feature = "debug"))]
@@ -177,23 +184,15 @@ impl<'a> CPU {
 
     #[cfg(feature = "debug")]
     pub fn record_regs(&mut self) {
-        let flags = format!("{}{}{}{}{}{}{}{}",
-                            if self.flag_n { 'N' } else { 'n' },
-                            if self.flag_v { 'V' } else { 'v' },
-                            if self.flag_s { 'u' } else { 'u' },
-                            if self.flag_b { 'B' } else { 'b' },
-                            if self.flag_d { 'D' } else { 'd' },
-                            if self.flag_i { 'I' } else { 'i' },
-                            if self.flag_z { 'Z' } else { 'z' },
-                            if self.flag_c { 'C' } else { 'c' },
-        );
+        let flags = self.flags_as_byte();
 
-        let regs = format!("A:{:02X} X:{:02X} Y:{:02X} S:{:02X} P:{}  ",
+        let regs = format!("A:{:02X} X:{:02X} Y:{:02X} P:{:02X} SP:{:02X}",
                            self.acc,
                            self.xir,
                            self.yir,
-                           self.sp,
-                           flags
+                           flags,
+                           self.sp
+
         );
         self.last_regs = regs;
     }
@@ -249,8 +248,8 @@ impl<'a> CPU {
         ((self.flag_z as u8) << 1) |
         ((self.flag_i as u8) << 2) |
         ((self.flag_d as u8) << 3) |
-        ((self.flag_b as u8) << 5) |
-        ((self.flag_s as u8) << 4) |
+        ((self.flag_b as u8) << 4) |
+        ((self.flag_s as u8) << 5) |
         ((self.flag_v as u8) << 6) |
         ((self.flag_n as u8) << 7) 
     }
@@ -260,7 +259,7 @@ impl<'a> CPU {
         self.flag_z = (flags >> 1) & 1 == 1;
         self.flag_i = (flags >> 2) & 1 == 1;
         self.flag_d = (flags >> 3) & 1 == 1;
-        self.flag_s = (flags >> 4) & 1 == 1;
+        self.flag_s = true;
         self.flag_b = (flags >> 5) & 1 == 1;
         self.flag_v = (flags >> 6) & 1 == 1;
         self.flag_n = (flags >> 7) & 1 == 1;

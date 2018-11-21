@@ -100,6 +100,14 @@ impl Nesapod {
     pub fn read_mem(&mut self, addr: u16) -> u8 {
         self.core.read_at(addr)
     }
+
+    #[cfg(feature = "debug")]
+    pub fn flush(&mut self) {
+        match self.debugger.flush_all() {
+            Ok(_) => {},
+            Err(f) => println!("Could not flush: {}", f)
+        }
+    }
 }
 
 pub fn main(rom: Option<String>, logging: bool) {
@@ -114,6 +122,7 @@ p => Print registers
 S => Print stack
 F => 16, H => 100, K => 1000, T => 10,000,
 U => 100,000, M = 1,000,000, G => 100,000,000
+W => Write to log if present
 q => Quit
 h => Print this message";
     println!("{}", help);
@@ -172,7 +181,8 @@ h => Print this message";
                 } else {
                     ()
                 }
-            }
+            },
+            "W" => nesapod.flush()
         }
     }
 }
