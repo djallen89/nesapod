@@ -245,3 +245,7 @@ pub fn bvs_rel(cpu: &mut CPU, membox: &mut Memory) {
     let flag = cpu.flag_v;
     branch(cpu, membox, flag);
 }
+
+pub fn snop_zpg(cpu: &mut CPU, membox: &mut Memory) {
+    cpu.increment_pc();
+}

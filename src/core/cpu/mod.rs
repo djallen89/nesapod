@@ -355,6 +355,7 @@ impl<'a> CPU {
         match opcode {
             0x00 => brk_imp(self, membox),
             0x01 => ora_ixi(self, membox),
+            0x04 => snop_zpg(self, membox),
             0x05 => ora_zpg(self, membox),
             0x06 => asl_zpg(self, membox),
             0x08 => php_imp(self, membox),
@@ -395,6 +396,7 @@ impl<'a> CPU {
             
             0x40 => rti_imp(self, membox),
             0x41 => eor_ixi(self, membox),
+            0x44 => snop_zpg(self, membox),
             0x45 => eor_zpg(self, membox),
             0x46 => lsr_zpg(self, membox),
             0x48 => pha_imp(self, membox),
@@ -415,6 +417,7 @@ impl<'a> CPU {
             
             0x60 => rts_imp(self, membox),
             0x61 => adc_ixi(self, membox),
+            0x64 => snop_zpg(self, membox),
             0x65 => adc_zpg(self, membox),
             0x66 => ror_zpg(self, membox),
             0x68 => pla_imp(self, membox),
