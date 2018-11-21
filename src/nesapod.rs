@@ -161,6 +161,7 @@ h => Print this message";
             "U" => nesapod.run(100000),
             "M" => nesapod.run(1000000),
             "G" => nesapod.run(100000000),
+            "W" => nesapod.flush(),
             x => {
                 if x.len() > 1 && &x[0..1] == "N" {
                     let rest = &x[1..].trim().parse::<usize>();
@@ -184,7 +185,6 @@ h => Print this message";
                     ()
                 }
             },
-            "W" => nesapod.flush(),
         }
     }
 }

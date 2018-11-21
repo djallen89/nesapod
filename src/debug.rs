@@ -39,10 +39,10 @@ pub fn default_log(logging: bool) -> Option<PathBuf> {
 }
 
 impl Debug {
-    pub fn new(_cap: usize, logging: bool) -> Debug {
+    pub fn new(cap: usize, logging: bool) -> Debug {
         Debug {
-            disp_length: 1,
-            max_length: 56,
+            disp_length: cap,
+            max_length: 32,
             logname: default_log(logging),
             messages: VecDeque::with_capacity(1024),
             len_since_read: 0,
@@ -85,7 +85,11 @@ impl Debug {
 
     pub fn input(&mut self, msg: &str) {
         if self.messages.len() >= (self.max_length as usize) {
-            let n = (self.max_length as usize) - (self.disp_length as usize);
+            let n = if self.max_length > self.disp_length {
+                (self.max_length as usize) - (self.disp_length as usize)
+            } else {
+                self.messages.len() - 1
+            };
             match self.flush(n) {
                 Ok(_) => {},
                 Err(f) => panic!(f)
@@ -118,7 +122,7 @@ impl Debug {
         let n = self.messages.len();
         self.flush(n)
     }
-
+    
     pub fn get(&self, idx: usize) -> String {
         match self.messages.get(idx) {
             Some(x) => x.clone(),
