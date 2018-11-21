@@ -491,10 +491,11 @@ pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
     let base_addr = cpu.read_pc(membox);
     let eff_addr = base_addr.wrapping_add(cpu.yir);
     let rhs = membox.cpu_ram[eff_addr as usize];
+    cpu.byte_1 = base_addr;
     cpu.last_eff_addr = eff_addr as u16;
     cpu.last_val = rhs;
     cpu.set_zn(rhs);
-    cpu.yir = rhs;
+    cpu.xir = rhs;
 }
 
 #[cfg(not(feature = "debug"))]
