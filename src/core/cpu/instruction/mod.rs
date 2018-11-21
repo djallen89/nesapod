@@ -246,6 +246,97 @@ pub fn bvs_rel(cpu: &mut CPU, membox: &mut Memory) {
     branch(cpu, membox, flag);
 }
 
-pub fn snop_zpg(cpu: &mut CPU, membox: &mut Memory) {
-    cpu.increment_pc();
+/*
+#[cfg(feature = "debug")]
+pub fn snop_imp(cpu: &mut CPU, membox: &mut Memory) {
+    
 }
+
+#[cfg(not(feature = "debug"))]
+pub fn snop_imp(cpu: &mut CPU, membox: &mut Memory) {
+
+}
+*/
+
+#[cfg(feature = "debug")]
+pub fn snop_zpg(cpu: &mut CPU, membox: &mut Memory) {
+    let addr = cpu.read_pc(membox);
+    let data = membox.read(addr as u16);
+    cpu.byte_1 = addr;
+    cpu.last_val = data;
+}
+
+#[cfg(not(feature = "debug"))]
+pub fn snop_zpg(cpu: &mut CPU, membox: &mut Memory) {
+    let _ = cpu.read_pc();
+}
+
+#[cfg(feature = "debug")]
+pub fn snop_zpx(cpu: &mut CPU, membox: &mut Memory) {
+    let bal = cpu.read_pc(membox);
+    let adl = bal.wrapping_add(cpu.xir);
+    let data = membox.read(adl as u16);
+    cpu.byte_1 = bal;
+    cpu.last_eff_addr = adl as u16;
+    cpu.last_val = data;
+}
+
+#[cfg(not(feature = "debug"))]
+pub fn snop_zpx(cpu: &mut CPU, membox: &mut Memory) {
+    let _ = cpu.read_pc(membox);
+}
+
+#[cfg(feature = "debug")]
+pub fn snop_abs(cpu: &mut CPU, membox: &mut Memory) {
+    let abl = cpu.read_pc(membox);
+    let abh = cpu.read_pc(membox);
+    let addr = combine_bytes(abl, abh);
+    let data = membox.read(addr);
+    cpu.byte_1 = abl;
+    cpu.byte_2 = abh;
+    cpu.last_eff_addr = addr;
+    cpu.last_val = data;
+}    
+
+#[cfg(not(feature = "debug"))]
+pub fn snop_abs(cpu: &mut CPU, membox: &mut Memory) {
+    let _ = cpu.read_pc();
+    let _ = cpu.read_pc();
+}
+
+#[cfg(feature = "debug")]
+pub fn snop_imm(cpu: &mut CPU, membox: &mut Memory) {
+    let val = cpu.read_pc(membox);
+    cpu.byte_1 = val;
+}
+
+#[cfg(not(feature = "debug"))]
+pub fn snop_imm(cpu: &mut CPU, membox: &mut Memory) {
+    let _ = cpu.read_pc();
+}
+
+#[cfg(feature = "debug")]
+pub fn snop_abx(cpu: &mut CPU, membox: &mut Memory) {
+    let bal = cpu.read_pc(membox);
+    let bah = cpu.read_pc(membox);
+    let adl = bal.wrapping_add(cpu.xir);
+    let c = if cpu.xir > (255 - bal) {
+        1
+    } else {
+        0
+    };
+    let adh = bah.wrapping_add(c);
+    let eff_addr = combine_bytes(adl, adh);
+    let data = membox.read(eff_addr);
+    cpu.byte_1 = bal;
+    cpu.byte_2 = bah;
+    cpu.last_eff_addr = eff_addr;
+    cpu.last_val = data;
+}
+
+#[cfg(not(feature = "debug"))]
+pub fn snop_abx(cpu: &mut CPU, membox: &mut Memory) {
+    let _ = cpu.read_pc();
+    let _ = cpu.read_pc();
+}
+

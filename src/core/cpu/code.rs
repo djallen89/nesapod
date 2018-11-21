@@ -219,9 +219,10 @@ pub fn print_instr(cpu:&CPU) -> String {
     match instr {
         STA | STX | STY |
         BIT => msg.push_str(&format!(" = {:02X}", cpu.last_val)),
+        _NP | 
         INC | DEC |
         ASL | LSR |
-        ROL | ROR => if addr != ACC {
+        ROL | ROR => if addr != ACC && addr != IMP {
             msg.push_str(&format!(" = {:02X}", cpu.last_val))
         },
         SBC => if addr != IMD {
