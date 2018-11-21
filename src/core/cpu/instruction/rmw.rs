@@ -57,6 +57,19 @@ fn inc(cpu: &mut CPU, data: u8) -> u8 {
 
 /* ASL zpg  LSR zpg  DEC zpg  INC zpg */
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+fn rmw_zpg(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
+    let adl = cpu.read_pc(membox);
+    cpu.byte_1 = adl;
+    let data = membox.cpu_ram[adl as usize];
+    cpu.last_eff_addr = adl as u16;
+    cpu.last_val = data;
+    //cpu.msg = format!("${:04X} = #${:02X}", adl as u16, data);
+    membox.cpu_ram[adl as usize] = op(cpu, data);
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 fn rmw_zpg(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let adl = cpu.read_pc(membox) as usize;
@@ -96,6 +109,22 @@ pub fn inc_zpg(cpu: &mut CPU, membox: &mut Memory) {
 
 /* ASL abs  LSR abs  DEC abs  INC abs */
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+fn rmw_abs(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
+    let adl = cpu.read_pc(membox);
+    let adh = cpu.read_pc(membox);
+    cpu.byte_1 = adl;
+    cpu.byte_2 = adh;
+    let addr = combine_bytes(adl, adh);
+    let data = membox.read(addr);
+    cpu.last_eff_addr = addr;
+    cpu.last_val = data;
+    //cpu.msg = format!("${:04X} = #${:02X}", addr as u16, data);
+    membox.write(addr, op(cpu, data));
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 fn rmw_abs(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let adl = cpu.read_pc(membox);
@@ -137,6 +166,21 @@ pub fn inc_abs(cpu: &mut CPU, membox: &mut Memory) {
 
 /* ASL zpx  LSR zpx  DEC zpx  INC zpx */
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+fn rmw_zpx(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
+    let bal = cpu.read_pc(membox);
+    cpu.byte_1 = bal;
+    let eff_bal = bal.wrapping_add(cpu.xir) as usize;
+    let adl = membox.cpu_ram[eff_bal] as usize;
+    let data = membox.cpu_ram[adl];
+    cpu.last_eff_addr = adl as u16;
+    cpu.last_val = data;
+    //cpu.msg = format!("${:04X} = #${:02X}", adl as u16, data);
+    membox.cpu_ram[adl] = op(cpu, data);
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 fn rmw_zpx(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let bal = cpu.read_pc(membox);
@@ -178,12 +222,29 @@ pub fn inc_zpx(cpu: &mut CPU, membox: &mut Memory) {
 
 /* ASL abx  LSR abx  DEC abx  INC abx */
 
+#[cfg(feature = "debug")]
+#[inline(always)]
+fn rmw_abx(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
+    let bal = cpu.read_pc(membox);
+    let bah = cpu.read_pc(membox);
+    cpu.byte_1 = bal;
+    cpu.byte_2 = bah;
+    let eff_addr = combine_bytes(bal, bah) + (cpu.xir as u16);
+    let data = membox.read(eff_addr);
+    cpu.last_eff_addr = eff_addr;
+    cpu.last_val = data;
+    //cpu.msg = format!("${:04X} = #${:02X}", eff_addr as u16, data);
+    membox.write(eff_addr, op(cpu, data));
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 fn rmw_abx(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let bal = cpu.read_pc(membox);
     let bah = cpu.read_pc(membox);
     let eff_addr = combine_bytes(bal, bah) + (cpu.xir as u16);
     let data = membox.read(eff_addr);
+    cpu.mem_val = data;
     membox.write(eff_addr, op(cpu, data));
 }
 

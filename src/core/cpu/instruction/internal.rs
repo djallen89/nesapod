@@ -1,5 +1,7 @@
 use std::u8;
 
+use super::read_one_byte;
+use super::read_two_bytes;
 use super::super::CPU;
 use super::super::FLAG_V;
 use super::super::super::Memory;
@@ -16,52 +18,52 @@ use super::super::combine_bytes;
 
 #[inline(always)]
 pub fn adc_imm(cpu: &mut CPU, membox: &mut Memory) {
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     adc_internal(cpu, rhs);
 }
 
 #[inline(always)]
 pub fn sbc_imm(cpu: &mut CPU, membox: &mut Memory) {
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     adc_internal(cpu, !rhs);
 }
 
 #[inline(always)]
 pub fn and_imm(cpu: &mut CPU, membox: &mut Memory) {
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     logical(cpu, rhs, &|acc, rhs| { acc & rhs });
 }
 
 #[inline(always)]
 pub fn eor_imm(cpu: &mut CPU, membox: &mut Memory) {
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     logical(cpu, rhs, &|acc, rhs| { acc ^ rhs });
 }
 
 #[inline(always)]
 pub fn ora_imm(cpu: &mut CPU, membox: &mut Memory) {
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     logical(cpu, rhs, &|acc, rhs| { acc | rhs });
 }
 
 #[inline(always)]
 pub fn cmp_imm(cpu: &mut CPU, membox: &mut Memory) {
     let lhs = cpu.acc;
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     compare(cpu, lhs, rhs);
 }
 
 #[inline(always)]
 pub fn cpx_imm(cpu: &mut CPU, membox: &mut Memory) {
     let lhs = cpu.xir;
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     compare(cpu, lhs, rhs);
 }
 
 #[inline(always)]
 pub fn cpy_imm(cpu: &mut CPU, membox: &mut Memory) {
     let lhs = cpu.yir;
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     compare(cpu, lhs, rhs);
 }
 
@@ -520,14 +522,14 @@ pub fn logical(cpu: &mut CPU, rhs: u8, op: &Fn(u8, u8) -> u8) {
 
 #[inline(always)]
 pub fn load_imm(cpu: &mut CPU, membox: &mut Memory) -> u8 {
-    let rhs = cpu.read_pc(membox);
+    let rhs = read_one_byte(cpu, membox);
     cpu.set_zn(rhs);
     rhs
 }
 
 #[inline(always)]
 pub fn zpg_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
-    let eff_addr = cpu.read_pc(membox);
+    let eff_addr = read_one_byte(cpu, membox);
     membox.cpu_ram[eff_addr as usize]
 }
 
@@ -546,11 +548,21 @@ pub fn two_byte_read(membox: &mut Memory, adl: u8, adh: u8) -> u8 {
 
 #[inline(always)]
 pub fn abs_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
-    let adl = cpu.read_pc(membox);
-    let adh = cpu.read_pc(membox);
+    let (adl, adh) = read_two_bytes(cpu, membox);
     two_byte_read(membox, adl, adh)
 }
 
+
+#[cfg(feature = "debug")]
+#[inline(always)]
+pub fn bit(cpu: &mut CPU, val: u8) {
+    cpu.last_val = val;    
+    cpu.flag_z = cpu.acc & val == 0;
+    cpu.flag_n = val > 127;
+    cpu.flag_v = (val & FLAG_V) == FLAG_V;
+}
+
+#[cfg(not(feature = "debug"))]
 #[inline(always)]
 pub fn bit(cpu: &mut CPU, val: u8) {
     cpu.flag_z = cpu.acc & val == 0;
@@ -567,7 +579,7 @@ pub fn load_abs(cpu: &mut CPU, membox: &mut Memory) -> u8 {
 
 #[inline(always)]
 pub fn ixi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
-    let mut base_addr = cpu.read_pc(membox);
+    let mut base_addr = read_one_byte(cpu, membox);
     base_addr = base_addr.wrapping_add(cpu.xir);
     let adl = membox.cpu_ram[base_addr as usize];
     let adh = membox.cpu_ram[base_addr.wrapping_add(1) as usize];
@@ -576,8 +588,7 @@ pub fn ixi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
 
 #[inline(always)]
 pub fn ab_ir_read(cpu: &mut CPU, membox: &mut Memory, ireg: u8) -> u8 {
-    let base_addr_lo = cpu.read_pc(membox);
-    let base_addr_hi = cpu.read_pc(membox);
+    let (base_addr_lo, base_addr_hi) = read_two_bytes(cpu, membox);
     let adl = base_addr_lo.wrapping_add(ireg);
     //carry results if base_addr_lo + ireg > 255
     let c = if ireg > (255 - base_addr_lo) {
@@ -591,15 +602,14 @@ pub fn ab_ir_read(cpu: &mut CPU, membox: &mut Memory, ireg: u8) -> u8 {
 
 #[inline(always)]
 pub fn zpx_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
-    let base_addr = cpu.read_pc(membox);
+    let base_addr = read_one_byte(cpu, membox);
     let eff_addr = base_addr.wrapping_add(cpu.xir);
     membox.cpu_ram[eff_addr as usize]
 }
 
-
 #[inline(always)]
 pub fn iyi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
-    let mut intermediate_addr = cpu.read_pc(membox);
+    let mut intermediate_addr = read_one_byte(cpu, membox);
     let base_addr_lo = membox.cpu_ram[intermediate_addr as usize];
     intermediate_addr = intermediate_addr.wrapping_add(1);
     let base_addr_hi = membox.cpu_ram[intermediate_addr as usize];
@@ -609,6 +619,7 @@ pub fn iyi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     } else {
         0
     };
-    let adh = base_addr_hi + c;
+    let adh = base_addr_hi.wrapping_add(c);
     two_byte_read(membox, adl, adh)
 }
+

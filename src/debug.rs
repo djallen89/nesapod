@@ -20,11 +20,14 @@ pub struct Debug {
 pub fn default_log(logging: bool) -> Option<PathBuf> {
     if logging {
         let t = time::now();
-        let ts = match time::strftime("%y%m%d%H%M%S", &t) {
+        /*
+        let ts = match time::strftime("%Y%m%d%H%M", &t) {
             Ok(s) => s,
             Err(f) => panic!(f)
         };
-        let p = PathBuf::from(&format!("logs/{}.log", ts));
+         */
+        // let p = PathBuf::from(&format!("logs/{}.log", ts));
+        let p = PathBuf::from("logs/LATEST.log");
         match File::create(&p) {
             Ok(_) => {},
             Err(f) => panic!(f)
@@ -71,10 +74,9 @@ impl Debug {
             self.len_since_read
         };
 
-        println!("{}", n);
         for i in 0 .. n {
             match self.messages.get(m - n + i) {
-                Some(x) => println!("{}", x),
+                Some(x) => print!("{}", x),
                 None => break
             }
         }

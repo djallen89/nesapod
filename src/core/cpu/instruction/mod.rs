@@ -7,11 +7,45 @@ use super::CPU;
 use super::FLAG_S;
 use super::FLAG_B;
 use super::IRQ_VECTOR;
+use super::combine_bytes;
 use super::super::Memory;
 pub use self::single_byte::*;
 pub use self::internal::*;
 pub use self::store::*;
 pub use self::rmw::*;
+
+#[inline(always)]
+#[cfg(feature = "debug")]
+pub fn read_one_byte(cpu: &mut CPU, membox: &mut Memory) -> u8 {
+    let rhs = cpu.read_pc(membox);
+    cpu.byte_1 = rhs;
+    rhs
+}
+
+#[inline(always)]
+#[cfg(not(feature = "debug"))]
+pub fn read_one_byte(cpu: &mut CPU, membox: &mut Memory) -> u8 {
+    let rhs = cpu.read_pc(membox);
+    rhs
+}
+
+#[inline(always)]
+#[cfg(feature = "debug")]
+pub fn read_two_bytes(cpu: &mut CPU, membox: &mut Memory) -> (u8, u8) {
+    let lo = cpu.read_pc(membox);
+    let hi = cpu.read_pc(membox);
+    cpu.byte_1 = lo;
+    cpu.byte_2 = hi;
+    (lo, hi)
+}
+
+#[inline(always)]
+#[cfg(not(feature = "debug"))]
+pub fn read_two_bytes(cpu: &mut CPU, membox: &mut Memory) -> (u8, u8) {
+    let lo = cpu.read_pc(membox);
+    let hi = cpu.read_pc(membox);
+    (lo, hi)
+}
 
 pub fn hlt_imp(cpu: &mut CPU, membox: &mut Memory) {
     cpu.decrement_pc();
@@ -39,7 +73,19 @@ pub fn pla_imp(cpu: &mut CPU, membox: &mut Memory) {
     cpu.acc = acc;
 }
 
-pub fn jsr_imp(cpu: &mut CPU, membox: &mut Memory) {
+#[cfg(feature = "debug")]
+pub fn jsr_abs(cpu: &mut CPU, membox: &mut Memory) {
+    let adl = cpu.read_pc(membox);
+    cpu.stack_push_pc(membox);
+    let adh = cpu.read_pc(membox);
+    cpu.byte_1 = adl;
+    cpu.byte_2 = adh;
+    cpu.pcl = adl;
+    cpu.pch = adh;
+}
+
+#[cfg(not(feature = "debug"))]
+pub fn jsr_abs(cpu: &mut CPU, membox: &mut Memory) {
     let adl = cpu.read_pc(membox);
     cpu.stack_push_pc(membox);
     let adh = cpu.read_pc(membox);
@@ -58,6 +104,15 @@ pub fn rti_imp(cpu: &mut CPU, membox: &mut Memory) {
     cpu.stack_pop_pc(membox);
 }
 
+#[cfg(feature = "debug")]
+pub fn jmp_abs(cpu: &mut CPU, membox: &mut Memory) {
+    let (adl, adh) = read_two_bytes(cpu, membox);
+    let addr = combine_bytes(adl, adh);
+    cpu.pcl = adl;
+    cpu.pch = adh;
+}
+
+#[cfg(not(feature = "debug"))]
 pub fn jmp_abs(cpu: &mut CPU, membox: &mut Memory) {
     let adl = cpu.read_pc(membox);
     let adh = cpu.read_pc(membox);
@@ -65,11 +120,26 @@ pub fn jmp_abs(cpu: &mut CPU, membox: &mut Memory) {
     cpu.pch = adh;
 }
 
+#[cfg(feature = "debug")]
 pub fn jmp_ind(cpu: &mut CPU, membox: &mut Memory) {
-    let ial = cpu.read_pc(membox) as u16;
-    let iah = cpu.read_pc(membox) as u16;
-    let adl = membox.read((iah << 8) + ial);
-    let adh = membox.read((iah << 8) + ial + 1);
+    let ial = cpu.read_pc(membox);
+    cpu.byte_1 = ial;
+    let iah = cpu.read_pc(membox);
+    cpu.byte_2 = iah;
+    let addr = combine_bytes(ial, iah);
+    let adl = membox.read(addr);
+    let adh = membox.read(addr + 1);
+    cpu.pcl = adl;
+    cpu.pch = adh;
+}
+
+#[cfg(not(feature = "debug"))]
+pub fn jmp_ind(cpu: &mut CPU, membox: &mut Memory) {
+    let ial = cpu.read_pc(membox);
+    let iah = cpu.read_pc(membox);
+    let addr = combine_bytes(ial, iah);
+    let adl = membox.read(addr);
+    let adh = membox.read(addr + 1);
     cpu.pcl = adl;
     cpu.pch = adh;
 }
@@ -80,6 +150,37 @@ pub fn rts_imp(cpu: &mut CPU, membox: &mut Memory) {
 }
 
 #[inline(always)]
+#[cfg(feature = "debug")]
+pub fn branch(cpu: &mut CPU, membox: &mut Memory, flag: bool) {
+    let offset = cpu.read_pc(membox);
+    cpu.byte_1 = offset;
+
+    let pcl;
+    let mut pch = cpu.pch;
+    
+    if offset > 127 {
+        //subtract one from pch if pcl < 1 + !offset
+        if cpu.pcl < 1 + !offset {
+            pch = cpu.pch.wrapping_sub(1);
+        }
+    } else {
+        //carry if pcl + offset > 255 -> offset > 255 - pcl
+        if offset > 255 - cpu.pcl {
+            pch = cpu.pch.wrapping_add(1);
+        }
+    }
+
+    pcl = cpu.pcl.wrapping_add(offset);
+    cpu.last_eff_addr = combine_bytes(pcl, pch);
+    
+    if flag {
+        cpu.pcl = pcl;
+        cpu.pch = pch;
+    }
+}
+
+#[inline(always)]
+#[cfg(not(feature = "debug"))]
 pub fn branch(cpu: &mut CPU, membox: &mut Memory, flag: bool) {
     let offset = cpu.read_pc(membox);
     if !flag {

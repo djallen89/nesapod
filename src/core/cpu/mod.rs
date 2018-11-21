@@ -1,10 +1,11 @@
 mod instruction;
+#[cfg(feature = "debug")]
+mod code;
 
 use std::{u8, u16, fmt};
 use self::instruction::*;
 use super::Interrupt;
 use super::Memory;
-
 
 pub const FLAG_C: u8 = 0b0000_0001;
 pub const FLAG_Z: u8 = 0b0000_0010;
@@ -34,6 +35,7 @@ pub fn combine_bytes(lower: u8, upper: u8) -> u16 {
     ((upper as u16) << 8) + (lower as u16)
 }
 
+#[cfg(feature = "debug")]
 pub struct CPU {
     // Program Counter
     pub pcl: u8,
@@ -44,8 +46,41 @@ pub struct CPU {
     pub flag_z: bool,
     pub flag_i: bool,
     pub flag_d: bool,
-    pub flag_b: bool,
     pub flag_s: bool,
+    pub flag_b: bool,
+    pub flag_v: bool,
+    pub flag_n: bool,
+    
+    // Primary Registers
+    pub acc: u8,
+    pub xir: u8,
+    pub yir: u8,
+    pub sp: u8,
+
+    // Feature = "Debug"ging
+    pub last_regs: String,
+    pub last_pc: u16,
+    pub last_op: u8,
+    pub byte_1: u8,
+    pub byte_2: u8,
+    pub last_eff_addr: u16,
+    pub last_val: u8
+    //pub msg: String
+}
+
+#[cfg(not(feature = "debug"))]
+pub struct CPU {
+    // Program Counter
+    pub pcl: u8,
+    pub pch: u8,
+    
+    // Processor Status Register
+    pub flag_c: bool,
+    pub flag_z: bool,
+    pub flag_i: bool,
+    pub flag_d: bool,
+    pub flag_s: bool,
+    pub flag_b: bool,
     pub flag_v: bool,
     pub flag_n: bool,
     
@@ -56,21 +91,42 @@ pub struct CPU {
     pub sp: u8,
 }
 
-impl fmt::Display for CPU {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let foo = format!("PC: {:04X}, P: {:08b}, A: {:02X}, X: {:02X}, Y: {:02X}, SP: {:02X}",
-                          combine_bytes(self.pcl, self.pch),
-                          self.flags_as_byte(),
-                          self.acc,
-                          self.xir,
-                          self.yir,
-                          self.sp);
 
-        write!(f, "{}", foo)
+impl fmt::Display for CPU {
+    #[cfg(feature = "debug")]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let instr_msg = code::print_instr(self);
+
+        write!(f, "{}{}", self.last_regs, instr_msg)
+    }
+
+    #[cfg(not(feature = "debug"))]
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let flags = format!("{}{}{}{}{}{}{}{}",
+                            if self.flag_n { 'N' } else { 'n' },
+                            if self.flag_v { 'V' } else { 'v' },
+                            if self.flag_s { 'u' } else { 'u' },
+                            if self.flag_b { 'B' } else { 'b' },
+                            if self.flag_d { 'D' } else { 'd' },
+                            if self.flag_i { 'I' } else { 'i' },
+                            if self.flag_z { 'Z' } else { 'z' },
+                            if self.flag_c { 'C' } else { 'c' },
+        );
+
+        let regs = format!("A:{:02X} X:{:02X} Y:{:02X} S:{:02X} P:{}  ",
+                           self.acc,
+                           self.xir,
+                           self.yir,
+                           self.sp,
+                           flags
+        );
+
+        write!(f, "{}", regs)
     }
 }
 
 impl<'a> CPU {
+    #[cfg(feature = "debug")]
     pub fn new() -> CPU {
         CPU {
             pcl: 0,
@@ -86,8 +142,60 @@ impl<'a> CPU {
             acc: 0,
             xir: 0,
             yir: 0,
-            sp: 0//POWERUP_SP,
+            sp: 0, //POWERUP_SP,
+
+            last_regs: format!(""),                                
+            last_pc: 00,
+            last_op: 00,
+            byte_1: 00,
+            byte_2: 00,
+            //msg: format!("")
+            last_eff_addr: 00,
+            last_val: 00
         }
+    }
+
+    #[cfg(not(feature = "debug"))]
+    pub fn new() -> CPU {
+        CPU {
+            pcl: 0,
+            pch: 0,
+            flag_c: false,
+            flag_z: false,
+            flag_i: true,
+            flag_d: false,
+            flag_b: false,
+            flag_s: true,
+            flag_v: false,
+            flag_n: false,
+            acc: 0,
+            xir: 0,
+            yir: 0,
+            sp: 0, //POWERUP_SP,
+        }
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn record_regs(&mut self) {
+        let flags = format!("{}{}{}{}{}{}{}{}",
+                            if self.flag_n { 'N' } else { 'n' },
+                            if self.flag_v { 'V' } else { 'v' },
+                            if self.flag_s { 'u' } else { 'u' },
+                            if self.flag_b { 'B' } else { 'b' },
+                            if self.flag_d { 'D' } else { 'd' },
+                            if self.flag_i { 'I' } else { 'i' },
+                            if self.flag_z { 'Z' } else { 'z' },
+                            if self.flag_c { 'C' } else { 'c' },
+        );
+
+        let regs = format!("A:{:02X} X:{:02X} Y:{:02X} S:{:02X} P:{}  ",
+                           self.acc,
+                           self.xir,
+                           self.yir,
+                           self.sp,
+                           flags
+        );
+        self.last_regs = regs;
     }
     
     pub fn reset(&mut self, membox: &mut Memory) {
@@ -117,7 +225,7 @@ impl<'a> CPU {
         self.increment_pc();
         membox.read(addr)
     }
-    
+
     #[inline(always)]
     fn set_zn(&mut self, val: u8) {
         self.flag_z = val == 0;
@@ -213,14 +321,34 @@ impl<'a> CPU {
         self.pch = membox.read(vector + 1);
     }
 
+    #[cfg(not(feature = "debug"))]
     pub fn exec(&mut self, membox: &mut Memory, interrupt: Interrupt) {
         match interrupt {
-            Interrupt::IRQ => return self.interrupt(membox, IRQ_VECTOR),
-            Interrupt::NMI => return self.interrupt(membox, NMI_VECTOR),
-            Interrupt::Nil => {} // do nothing
+            Interrupt::IRQ => self.interrupt(membox, IRQ_VECTOR),
+            Interrupt::NMI => self.interrupt(membox, NMI_VECTOR),
+            Interrupt::Nil => {
+                let opcode = self.read_pc(membox);
+                self.eval(membox, opcode);
+            }
         }
-        
-        let opcode = self.read_pc(membox);
+    }
+
+    #[cfg(feature = "debug")]
+    pub fn exec(&mut self, membox: &mut Memory, interrupt: Interrupt) {
+        match interrupt {
+            Interrupt::IRQ => self.interrupt(membox, IRQ_VECTOR),
+            Interrupt::NMI => self.interrupt(membox, NMI_VECTOR),
+            Interrupt::Nil => {
+                self.last_pc = combine_bytes(self.pcl, self.pch);
+                self.record_regs();
+                let opcode = self.read_pc(membox);
+                self.last_op = opcode;
+                self.eval(membox, opcode);
+            }
+        }
+    }
+    
+    pub fn eval(&mut self, membox: &mut Memory, opcode: u8) {
         match opcode {
             0x00 => brk_imp(self, membox),
             0x01 => ora_ixi(self, membox),
@@ -241,7 +369,7 @@ impl<'a> CPU {
             0x1D => ora_abx(self, membox),
             0x1E => asl_abx(self, membox),
             
-            0x20 => jsr_imp(self, membox),
+            0x20 => jsr_abs(self, membox),
             0x21 => and_ixi(self, membox),
             0x24 => bit_zpg(self, membox),
             0x25 => and_zpg(self, membox),

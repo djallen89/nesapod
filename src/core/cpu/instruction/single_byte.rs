@@ -10,26 +10,21 @@ pub fn asl_acc(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.set_czn(res, carry);
 }
 
-
 pub fn clc_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_c = false;
 }
-
 
 pub fn cld_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_d = false;
 }
 
-
 pub fn cli_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_i = false;
 }
 
-
 pub fn clv_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_v = false;
 }
-
 
 pub fn dex_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.xir = cpu.xir.wrapping_sub(1);
@@ -37,13 +32,11 @@ pub fn dex_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.set_zn(res);
 }
 
-
 pub fn dey_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.yir = cpu.yir.wrapping_sub(1);
     let res = cpu.yir;
     cpu.set_zn(res);
 }
-
 
 pub fn inx_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.xir = cpu.xir.wrapping_add(1);
@@ -51,13 +44,11 @@ pub fn inx_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.set_zn(res);
 }
 
-
 pub fn iny_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.yir = cpu.yir.wrapping_add(1);
     let res = cpu.yir;
     cpu.set_zn(res);
 }
-
 
 pub fn lsr_acc(cpu: &mut CPU, _membox: &mut Memory) {
     let carry = (cpu.acc & 0b0000_0001) == 0b0000_0001;
@@ -66,11 +57,9 @@ pub fn lsr_acc(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.set_czn(res, carry);
 }
 
-
 pub fn nop_imp(_cpu: &mut CPU, _membox: &mut Memory) {
     ();
 }
-
 
 pub fn rol_acc(cpu: &mut CPU, _membox: &mut Memory) {
     let old_carry = cpu.flag_c as u8;
@@ -79,7 +68,6 @@ pub fn rol_acc(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.set_czn(res, next_carry);
 }
 
-
 pub fn ror_acc(cpu: &mut CPU, _membox: &mut Memory) {
     let old_carry = cpu.flag_c as u8;
     let next_carry = (cpu.acc & 0b0000_0001) == 0b0000_0001;
@@ -87,21 +75,17 @@ pub fn ror_acc(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.set_czn(res, next_carry);
 }
 
-
 pub fn sec_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_c = true;
 }
-
 
 pub fn sed_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_d = true;
 }
 
-
 pub fn sei_imp(cpu: &mut CPU, _membox: &mut Memory) {
     cpu.flag_i = true;
 }
-
 
 pub fn tax_imp(cpu: &mut CPU, _membox: &mut Memory) {
     let val = cpu.acc;
@@ -130,7 +114,6 @@ pub fn txa_imp(cpu: &mut CPU, _membox: &mut Memory) {
 pub fn txs_imp(cpu: &mut CPU, _membox: &mut Memory) {
     let val = cpu.xir;
     cpu.sp = val;
-    cpu.set_zn(val);
 }
 
 pub fn tya_imp(cpu: &mut CPU, _membox: &mut Memory) {

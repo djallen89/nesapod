@@ -108,8 +108,8 @@ impl NESCore {
         self.cart.dump_ram()
     }
 
-    pub fn print_cpu(&self) {
-        println!("{}", self.cpu)
+    pub fn print_cpu(&self) -> String {
+        format!("{}\n", self.cpu)
     }
 
     pub fn print_stack(&mut self) {
@@ -135,5 +135,14 @@ impl NESCore {
 
     pub fn nestest_check(&self) {
         println!("{}{}", self.cpu_ram[2], self.cpu_ram[3]);
+    }
+
+    pub fn read_at(&mut self, addr: u16) -> u8 {
+        let mut mem = Memory::new(&mut self.cpu_ram,
+                                  &mut self.io_regs,
+                                  &mut self.ppu,
+                                  &mut self.cart
+        );
+        mem.read(addr)
     }
 }
