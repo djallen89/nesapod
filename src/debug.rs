@@ -11,7 +11,7 @@ use std::path::PathBuf;
 pub struct Debug {
     disp_length: usize,
     max_length: usize,
-    logname: Option<PathBuf>,
+    pub logname: Option<PathBuf>,
     messages: VecDeque<String>,
     len_since_read: usize
 }
@@ -42,7 +42,7 @@ impl Debug {
     pub fn new(cap: usize, logging: bool) -> Debug {
         Debug {
             disp_length: cap,
-            max_length: 32,
+            max_length: 1024,
             logname: default_log(logging),
             messages: VecDeque::with_capacity(1024),
             len_since_read: 0,

@@ -63,7 +63,11 @@ impl Nesapod {
             let msg = self.core.print_cpu();
             self.debugger.input(&msg);
         }
-        self.debugger.print();
+        if self.debugger.logname.is_some() {
+            // do nothing
+        } else {
+            self.debugger.print()
+        }
     }
 
     #[cfg(not(feature = "debug"))]

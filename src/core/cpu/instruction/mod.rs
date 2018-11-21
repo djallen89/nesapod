@@ -48,7 +48,11 @@ pub fn read_two_bytes(cpu: &mut CPU, membox: &mut Memory) -> (u8, u8) {
 }
 
 pub fn hlt_imp(cpu: &mut CPU, membox: &mut Memory) {
-    panic!(format!("Illegal instruction: {:02X}", cpu.last_op));
+    panic!(format!("Illegal instruction: PC = {:02X}{:02X}, Op = {:02X}",
+                   cpu.pch,
+                   cpu.pcl,
+                   cpu.last_op
+    ));
     //cpu.increment_pc();
 }
 
@@ -91,6 +95,13 @@ pub fn jsr_abs(cpu: &mut CPU, membox: &mut Memory) {
     let adh = cpu.read_pc(membox);
     cpu.pcl = adl;
     cpu.pch = adh;
+}
+
+pub fn rts_imp(cpu: &mut CPU, membox: &mut Memory) {
+    cpu.stack_pop_pc(membox);
+    //print!("RTS: PC = {:02X}{:02X}", cpu.pch, cpu.pcl);
+    cpu.increment_pc();
+    //println!("; New PC = {:02X}{:02X}", cpu.pch, cpu.pcl);
 }
 
 pub fn brk_imp(cpu: &mut CPU, membox: &mut Memory) {
@@ -140,11 +151,6 @@ pub fn jmp_ind(cpu: &mut CPU, membox: &mut Memory) {
     let adh = membox.read(combine_bytes(ial.wrapping_add(1), iah));
     cpu.pcl = adl;
     cpu.pch = adh;
-}
-
-pub fn rts_imp(cpu: &mut CPU, membox: &mut Memory) {
-    cpu.stack_pop_pc(membox);
-    cpu.increment_pc();
 }
 
 #[inline(always)]

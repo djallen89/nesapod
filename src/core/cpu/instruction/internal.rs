@@ -349,6 +349,14 @@ pub fn ora_aby(cpu: &mut CPU, membox: &mut Memory) {
 }
 
 #[inline(always)]
+pub fn cmp_abx(cpu: &mut CPU, membox: &mut Memory) {
+    let lhs = cpu.acc;
+    let ireg = cpu.xir;
+    let rhs = ab_ir_read(cpu, membox, ireg);
+    compare(cpu, lhs, rhs);
+}
+
+#[inline(always)]
 pub fn cmp_aby(cpu: &mut CPU, membox: &mut Memory) {
     let lhs = cpu.acc;
     let ireg = cpu.yir;

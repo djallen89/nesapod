@@ -281,17 +281,21 @@ impl<'a> CPU {
     }
 
     fn stack_push_pc(&mut self, membox: &mut Memory) {
-        let addr = (self.sp as u16) + STACK_PAGE;
-        membox.cpu_ram[addr as usize] = self.pch;
-        membox.cpu_ram[(addr as usize).wrapping_sub(1)] = self.pcl;
+        //let addr = (self.sp as u16) + STACK_PAGE;
+        let spage = STACK_PAGE as usize;
+        membox.cpu_ram[(self.sp as usize) + spage] = self.pch;
+        membox.cpu_ram[(self.sp.wrapping_sub(1) as usize) + spage] = self.pcl;
         let new_sp = self.sp.wrapping_sub(2);
         self.sp = new_sp;
     }
 
     fn stack_pop_pc(&mut self, membox: &mut Memory) {
-        let addr = (self.sp as u16) + STACK_PAGE;
-        self.pcl = membox.cpu_ram[(addr as usize).wrapping_add(1)];
-        self.pch = membox.cpu_ram[(addr as usize).wrapping_add(2)];
+        //let addr = (self.sp as u16) + STACK_PAGE;
+        //self.pcl = membox.cpu_ram[(addr as usize).wrapping_add(1)];
+        //self.pch = membox.cpu_ram[(addr as usize).wrapping_add(2)];
+        let spage = STACK_PAGE as usize;
+        self.pcl = membox.cpu_ram[(self.sp.wrapping_add(1) as usize) + spage];
+        self.pch = membox.cpu_ram[(self.sp.wrapping_add(2) as usize) + spage];
         let new_sp = self.sp.wrapping_add(2);
         self.sp = new_sp;
     }
@@ -492,6 +496,7 @@ impl<'a> CPU {
             0xD6 => dec_zpx(self, membox),
             0xD8 => cld_imp(self, membox),
             0xD9 => cmp_aby(self, membox),
+            0xDD => cmp_abx(self, membox),
             0xDE => dec_abx(self, membox),
             
             0xE0 => cpx_imm(self, membox),
