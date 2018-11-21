@@ -116,6 +116,8 @@ pub fn main(rom: Option<String>, logging: bool) {
     let help =
         "n @ 1 ... 9 => run n times
 N# => Run # times (e.g. N3210 runs 3,210 times)
+r => Reset
+READ# => Read memory at location
 D => Print debug status at 0x0002 and 0x0003
 d => Print status of debug rom
 p => Print registers
@@ -172,7 +174,7 @@ h => Print this message";
                         Ok(n) => nesapod.set_pc(n),
                         Err(f) => println!("{}", f)
                     }
-                } else if x.len() > 8 && &x[0..4] == "READ" {
+                } else if x.len() > 4 && &x[0..4] == "READ" {
                     let rest = u16::from_str_radix(&x[4..].trim(), 16);
                     match rest {
                         Ok(n) => println!("{}", nesapod.read_mem(n)),
@@ -182,7 +184,7 @@ h => Print this message";
                     ()
                 }
             },
-            "W" => nesapod.flush()
+            "W" => nesapod.flush(),
         }
     }
 }

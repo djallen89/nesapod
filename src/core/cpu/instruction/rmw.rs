@@ -9,7 +9,7 @@ use super::super::combine_bytes;
 
 #[inline(always)]
 fn asl(cpu: &mut CPU, data: u8) -> u8 {
-    let carry = (data & 0b1000_0000) == 0b1000_0000;
+    let carry = data > 127;
     let res = data << 1;
     cpu.set_czn(res, carry);
     res
@@ -171,12 +171,10 @@ fn rmw_zpx(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let bal = cpu.read_pc(membox);
     cpu.byte_1 = bal;
     let eff_bal = bal.wrapping_add(cpu.xir) as usize;
-    let adl = membox.cpu_ram[eff_bal] as usize;
-    let data = membox.cpu_ram[adl];
-    cpu.last_eff_addr = adl as u16;
+    let data = membox.cpu_ram[eff_bal];
+    cpu.last_eff_addr = eff_bal as u16;
     cpu.last_val = data;
-    //cpu.msg = format!("${:04X} = #${:02X}", adl as u16, data);
-    membox.cpu_ram[adl] = op(cpu, data);
+    membox.cpu_ram[eff_bal] = op(cpu, data);
 }
 
 #[cfg(not(feature = "debug"))]
