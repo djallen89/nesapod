@@ -1,4 +1,4 @@
-use time;
+// use time;
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
 use std::io::BufWriter;
@@ -19,8 +19,8 @@ pub struct Debug {
 //TODO: Separate Debugging from Logging
 pub fn default_log(logging: bool) -> Option<PathBuf> {
     if logging {
-        let t = time::now();
         /*
+        let t = time::now();
         let ts = match time::strftime("%Y%m%d%H%M", &t) {
             Ok(s) => s,
             Err(f) => panic!(f)

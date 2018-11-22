@@ -4,7 +4,7 @@ use super::CPU;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Code {
     LDA, LDX, LDY, LAX,
-    STA, STX, STY, ASX,
+    STA, STX, STY, AXS,
     ADC, SBC, _SB,
     INC, INX, INY, INS,
     DEC, DEX, DEY, DCM,
@@ -57,7 +57,7 @@ impl fmt::Display for Code {
             Code::XAS | Code::AXA => write!(f, "*{}", code),
             Code::_SB => write!(f, "*SBC"),
             Code::_NP => write!(f, "*NOP"),
-            Code::ASX => write!(f, "*SAX"),
+            Code::AXS => write!(f, "*SAX"),
             Code::DCM => write!(f, "*DCP"),
             Code::INS => write!(f, "*ISB"),
             Code::LSE => write!(f, "*SRE"),
@@ -77,8 +77,8 @@ pub const OPCODE_TABLE: [Code; 256] =
      BVC, EOR, ILL, LSE, _NP, EOR, LSR, LSE, CLI, EOR, _NP, LSE, _NP, EOR, LSR, LSE, //5
      RTS, ADC, ILL, RRA, _NP, ADC, ROR, RRA, PLA, ADC, ROR, ARR, JMP, ADC, ROR, RRA, //6
      BVS, ADC, ILL, RRA, _NP, ADC, ROR, RRA, SEI, ADC, _NP, RRA, _NP, ADC, ROR, RRA, //7
-     _NP, STA, _NP, ASX, STY, STA, STX, ASX, DEY, _NP, TXA, XAA, STY, STA, STX, ASX, //8
-     BCC, STA, ILL, AXA, STY, STA, STX, ASX, TYA, STA, TXS, TAS, SAY, STA, XAS, AXA, //9
+     _NP, STA, _NP, AXS, STY, STA, STX, AXS, DEY, _NP, TXA, XAA, STY, STA, STX, AXS, //8
+     BCC, STA, ILL, AXA, STY, STA, STX, AXS, TYA, STA, TXS, TAS, SAY, STA, XAS, AXA, //9
      LDY, LDA, LDX, LAX, LDY, LDA, LDX, LAX, TAY, LDA, TAX, OAL, LDY, LDA, LDX, LAX, //A
      BCS, LDA, ILL, LAX, LDY, LDA, LDX, LAX, CLV, LDA, TSX, ILL, LDY, LDA, LDX, LAX, //B
      CPY, CMP, ILL, DCM, CPY, CMP, DEC, DCM, INY, CMP, DEX, SAX, CPY, CMP, DEC, DCM, //C
@@ -213,7 +213,6 @@ pub fn print_instr(cpu:&CPU) -> String {
                              cpu.last_eff_addr
         ),
         REL => format!(" ${:04X}", cpu.last_eff_addr),
-        _ => format!("")
     };
 
     match instr {
@@ -222,7 +221,7 @@ pub fn print_instr(cpu:&CPU) -> String {
         _NP | 
         INC | DEC |
         ASL | LSR |
-        ROL | ROR => if addr != ACC && addr != IMP {
+        ROL | ROR => if addr != ACC && addr != IMP  && addr != IMD {
             msg.push_str(&format!(" = {:02X}", cpu.last_val))
         },
         SBC => if addr != IMD {

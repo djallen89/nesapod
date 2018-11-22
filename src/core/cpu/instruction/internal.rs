@@ -156,6 +156,12 @@ pub fn ldy_zpg(cpu: &mut CPU, membox: &mut Memory) {
     cpu.yir = load_zpg(cpu, membox);
 }
 
+#[inline(always)]
+pub fn lax_zpg(cpu: &mut CPU, membox: &mut Memory) {
+    cpu.acc = load_zpg(cpu, membox);
+    cpu.xir = cpu.acc;
+}
+
 /* Absolute Addressing */
 
 #[inline(always)]
@@ -230,6 +236,12 @@ pub fn ldy_abs(cpu: &mut CPU, membox: &mut Memory) {
     cpu.yir = load_abs(cpu, membox);
 }
 
+#[inline(always)]
+pub fn lax_abs(cpu: &mut CPU, membox: &mut Memory) {
+    cpu.acc = load_abs(cpu, membox);
+    cpu.xir = cpu.acc;
+}
+
 /* Indirect, X */
 
 
@@ -275,6 +287,14 @@ pub fn lda_ixi(cpu: &mut CPU, membox: &mut Memory) {
     let rhs = ixi_read(cpu, membox);
     cpu.set_zn(rhs);
     cpu.acc = rhs;
+}
+
+#[inline(always)]
+pub fn lax_ixi(cpu: &mut CPU, membox: &mut Memory) {
+    let rhs = ixi_read(cpu, membox);
+    cpu.set_zn(rhs);
+    cpu.acc = rhs;
+    cpu.xir = rhs;
 }
 
 /* Absolute, X and Absolute, Y */
@@ -389,6 +409,15 @@ pub fn ldx_aby(cpu: &mut CPU, membox: &mut Memory) {
 }
 
 #[inline(always)]
+pub fn lax_aby(cpu: &mut CPU, membox: &mut Memory) {
+    let ireg = cpu.yir;
+    let rhs = ab_ir_read(cpu, membox, ireg);
+    cpu.set_zn(rhs);
+    cpu.xir = rhs;
+    cpu.acc = rhs;
+}
+
+#[inline(always)]
 pub fn ldy_abx(cpu: &mut CPU, membox: &mut Memory) {
     let ireg = cpu.xir;
     let rhs = ab_ir_read(cpu, membox, ireg);
@@ -493,9 +522,17 @@ pub fn lda_iyi(cpu: &mut CPU, membox: &mut Memory) {
     cpu.acc = rhs;
 }
 
+#[inline(always)]
+pub fn lax_iyi(cpu: &mut CPU, membox: &mut Memory) {
+    let rhs = iyi_read(cpu, membox);
+    cpu.set_zn(rhs);
+    cpu.acc = rhs;
+    cpu.xir = rhs;
+}
+
 #[cfg(feature = "debug")]
 #[inline(always)]
-pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
+pub fn load_zpy(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let base_addr = cpu.read_pc(membox);
     let eff_addr = base_addr.wrapping_add(cpu.yir);
     let rhs = membox.cpu_ram[eff_addr as usize];
@@ -503,17 +540,30 @@ pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
     cpu.last_eff_addr = eff_addr as u16;
     cpu.last_val = rhs;
     cpu.set_zn(rhs);
-    cpu.xir = rhs;
+    rhs
 }
 
 #[cfg(not(feature = "debug"))]
 #[inline(always)]
-pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
+pub fn load_zpy(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let base_addr = cpu.read_pc(membox);
     let eff_addr = base_addr.wrapping_add(cpu.yir);
     let rhs = membox.cpu_ram[eff_addr as usize];
     cpu.set_zn(rhs);
-    cpu.yir = rhs;
+    rhs
+}
+
+#[inline(always)]
+pub fn ldx_zpy(cpu: &mut CPU, membox: &mut Memory) {
+    let rhs = load_zpy(cpu, membox);
+    cpu.xir = rhs;
+}
+
+#[inline(always)]
+pub fn lax_zpy(cpu: &mut CPU, membox: &mut Memory) {
+    let rhs = load_zpy(cpu, membox);
+    cpu.xir = rhs;
+    cpu.acc = rhs;
 }
 
 #[cfg(feature = "debug")]
@@ -722,4 +772,5 @@ pub fn iyi_read(cpu: &mut CPU, membox: &mut Memory) -> u8 {
     let adh = base_addr_hi.wrapping_add(c);
     two_byte_read(cpu, membox, adl, adh)
 }
+
 

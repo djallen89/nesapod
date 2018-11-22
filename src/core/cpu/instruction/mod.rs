@@ -47,7 +47,7 @@ pub fn read_two_bytes(cpu: &mut CPU, membox: &mut Memory) -> (u8, u8) {
     (lo, hi)
 }
 
-pub fn hlt_imp(cpu: &mut CPU, membox: &mut Memory) {
+pub fn hlt_imp(cpu: &mut CPU, _membox: &mut Memory) {
     panic!(format!("Illegal instruction: PC = {:02X}{:02X}, Op = {:02X}",
                    cpu.pch,
                    cpu.pcl,
@@ -119,6 +119,7 @@ pub fn rti_imp(cpu: &mut CPU, membox: &mut Memory) {
 pub fn jmp_abs(cpu: &mut CPU, membox: &mut Memory) {
     let (adl, adh) = read_two_bytes(cpu, membox);
     let addr = combine_bytes(adl, adh);
+    cpu.last_eff_addr = addr;
     cpu.pcl = adl;
     cpu.pch = adh;
 }
@@ -245,18 +246,6 @@ pub fn bvs_rel(cpu: &mut CPU, membox: &mut Memory) {
     let flag = cpu.flag_v;
     branch(cpu, membox, flag);
 }
-
-/*
-#[cfg(feature = "debug")]
-pub fn snop_imp(cpu: &mut CPU, membox: &mut Memory) {
-    
-}
-
-#[cfg(not(feature = "debug"))]
-pub fn snop_imp(cpu: &mut CPU, membox: &mut Memory) {
-
-}
-*/
 
 #[cfg(feature = "debug")]
 pub fn snop_zpg(cpu: &mut CPU, membox: &mut Memory) {

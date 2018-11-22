@@ -320,7 +320,7 @@ impl INES {
                     _ => {
                         let addr = sxrom.prg_read(idx) - 0x8000;
                         let eff_addr = addr % self.prg_rom_size;
-                        self.prg_rom[addr % self.prg_rom_size]
+                        self.prg_rom[eff_addr]
                     }
                 }
             },

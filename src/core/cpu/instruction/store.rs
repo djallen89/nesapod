@@ -18,7 +18,6 @@ pub fn two_byte_write(cpu: &mut CPU,
     let old_val = membox.read(eff_addr);
     cpu.last_eff_addr = eff_addr;
     cpu.last_val = old_val;
-    //println!("2BW: Address is {:04X}, val is {:02X}", eff_addr, val);
     membox.write(eff_addr, val);
 }
 
@@ -42,7 +41,6 @@ pub fn one_byte_write(cpu: &mut CPU,
     let old_val = membox.cpu_ram[adl as usize];
     cpu.last_eff_addr = adl as u16;
     cpu.last_val = old_val;
-    //println!("1BW: Address is {:04X}, val is {:02X}", adl, val);
     membox.cpu_ram[adl as usize] = val;
 }
 
@@ -58,17 +56,21 @@ pub fn sta_zpg(cpu: &mut CPU, membox: &mut Memory) {
     one_byte_write(cpu, membox, adl, val);
 }
 
-
 pub fn stx_zpg(cpu: &mut CPU, membox: &mut Memory) {
     let adl = read_one_byte(cpu, membox);
     let val = cpu.xir;
     one_byte_write(cpu, membox, adl, val);
 }
 
-
 pub fn sty_zpg(cpu: &mut CPU, membox: &mut Memory) {
     let adl = read_one_byte(cpu, membox);
     let val = cpu.yir;
+    one_byte_write(cpu, membox, adl, val);
+}
+
+pub fn axs_zpg(cpu: &mut CPU, membox: &mut Memory) {
+    let adl = read_one_byte(cpu, membox);
+    let val = cpu.acc & cpu.xir;
     one_byte_write(cpu, membox, adl, val);
 }
 
@@ -93,6 +95,12 @@ pub fn sty_abs(cpu: &mut CPU, membox: &mut Memory) {
     two_byte_write(cpu, membox, adl, adh, val);
 }
 
+pub fn axs_abs(cpu: &mut CPU, membox: &mut Memory) {
+    let (adl, adh) = read_two_bytes(cpu, membox);
+    let val = cpu.acc & cpu.xir;
+    two_byte_write(cpu, membox, adl, adh, val);
+}
+
 /* STA ixi  --- ---  --- ---  */
 pub fn sta_ixi(cpu: &mut CPU, membox: &mut Memory) {
     let mut bal = read_one_byte(cpu, membox);
@@ -101,6 +109,16 @@ pub fn sta_ixi(cpu: &mut CPU, membox: &mut Memory) {
     bal = bal.wrapping_add(1);
     let adh = membox.read(bal as u16);
     let val = cpu.acc;
+    two_byte_write(cpu, membox, adl, adh, val);
+}
+
+pub fn axs_ixi(cpu: &mut CPU, membox: &mut Memory) {
+    let mut bal = read_one_byte(cpu, membox);
+    bal = bal.wrapping_add(cpu.xir);
+    let adl = membox.read(bal as u16);
+    bal = bal.wrapping_add(1);
+    let adh = membox.read(bal as u16);
+    let val = cpu.acc & cpu.xir;
     two_byte_write(cpu, membox, adl, adh, val);
 }
 
@@ -113,7 +131,6 @@ pub fn sta_abx(cpu: &mut CPU, membox: &mut Memory) {
     let val = membox.read(eff_addr);
     cpu.last_eff_addr = eff_addr;
     cpu.last_val = val;
-    //cpu.msg = format!("${:04X} = #${:02X}", eff_addr, val);
     membox.write(eff_addr, cpu.acc);
 }
 
@@ -131,7 +148,6 @@ pub fn sta_aby(cpu: &mut CPU, membox: &mut Memory) {
     let val = membox.read(eff_addr);
     cpu.last_eff_addr = eff_addr;
     cpu.last_val = val;
-    //cpu.msg = format!("${:04X} = #${:02X}", eff_addr, val);
     membox.write(eff_addr, cpu.acc);
 }
 
@@ -151,7 +167,6 @@ pub fn sta_zpx(cpu: &mut CPU, membox: &mut Memory) {
     two_byte_write(cpu, membox, adl, 0, val);
 }
 
-
 pub fn sty_zpx(cpu: &mut CPU, membox: &mut Memory) {
     let bal = read_one_byte(cpu, membox);
     let adl = bal.wrapping_add(cpu.xir);
@@ -159,13 +174,21 @@ pub fn sty_zpx(cpu: &mut CPU, membox: &mut Memory) {
     two_byte_write(cpu, membox, adl, 0, val);
 }
 
-
 pub fn stx_zpy(cpu: &mut CPU, membox: &mut Memory) {
     let bal = read_one_byte(cpu, membox);
     let adl = bal.wrapping_add(cpu.yir);
     let val = cpu.xir;
     two_byte_write(cpu, membox, adl, 0, val);
 }
+
+pub fn axs_zpy(cpu: &mut CPU, membox: &mut Memory) {
+    let bal = read_one_byte(cpu, membox);
+    let adl = bal.wrapping_add(cpu.yir);
+    let val = cpu.acc & cpu.xir;
+    two_byte_write(cpu, membox, adl, 0, val);
+}
+
+//pub fn stx_
 
 /* STA iyi  --- ---  --- ---*/
 pub fn sta_iyi(cpu: &mut CPU, membox: &mut Memory) {
