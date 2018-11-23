@@ -248,7 +248,7 @@ impl<'a> CPU {
         ((self.flag_z as u8) << 1) |
         ((self.flag_i as u8) << 2) |
         ((self.flag_d as u8) << 3) |
-        ((self.flag_b as u8) << 4) |
+        (true as u8) << 4 |
         ((self.flag_s as u8) << 5) |
         ((self.flag_v as u8) << 6) |
         ((self.flag_n as u8) << 7) 
@@ -300,6 +300,7 @@ impl<'a> CPU {
         self.sp = new_sp;
     }
 
+    /*
     pub fn print_stack(&self, membox: &Memory) {
         print!("    ");
         for n in 0 .. 16 {
@@ -314,10 +315,11 @@ impl<'a> CPU {
             println!("");
         }
     }
+     */
 
     fn interrupt(&mut self, membox: &mut Memory, vector: u16) {
         self.stack_push_pc(membox);
-        let flags = self.flags_as_byte();
+        let flags = self.flags_as_byte() | FLAG_B & !FLAG_S;
         self.flag_i = true;
         self.stack_push(membox, flags);
         self.pcl = membox.read(vector);

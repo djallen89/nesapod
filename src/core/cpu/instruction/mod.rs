@@ -99,15 +99,18 @@ pub fn jsr_abs(cpu: &mut CPU, membox: &mut Memory) {
 
 pub fn rts_imp(cpu: &mut CPU, membox: &mut Memory) {
     cpu.stack_pop_pc(membox);
-    //print!("RTS: PC = {:02X}{:02X}", cpu.pch, cpu.pcl);
     cpu.increment_pc();
-    //println!("; New PC = {:02X}{:02X}", cpu.pch, cpu.pcl);
 }
 
 pub fn brk_imp(cpu: &mut CPU, membox: &mut Memory) {
     cpu.increment_pc();
+    cpu.stack_push_pc(membox);
     cpu.flag_s = true;
-    cpu.interrupt(membox, IRQ_VECTOR);
+    let flags = cpu.flags_as_byte() | FLAG_S | FLAG_B;
+    cpu.stack_push(membox, flags);
+    cpu.flag_i = true;
+    cpu.pcl = membox.read(IRQ_VECTOR);
+    cpu.pch = membox.read(IRQ_VECTOR + 1);
 }
 
 pub fn rti_imp(cpu: &mut CPU, membox: &mut Memory) {

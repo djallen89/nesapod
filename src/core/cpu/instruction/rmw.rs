@@ -366,7 +366,7 @@ fn rmw_abx(cpu: &mut CPU, membox: &mut Memory, op: &Fn(&mut CPU, u8) -> u8) {
     let bah = cpu.read_pc(membox);
     cpu.byte_1 = bal;
     cpu.byte_2 = bah;
-    let eff_addr = combine_bytes(bal, bah) + (cpu.xir as u16);
+    let eff_addr = combine_bytes(bal, bah).wrapping_add(cpu.xir as u16);
     let data = membox.read(eff_addr);
     cpu.last_eff_addr = eff_addr;
     cpu.last_val = data;
